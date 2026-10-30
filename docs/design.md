@@ -192,6 +192,7 @@ Each milestone ships something usable and goes through PRs with tests, like v1.
 | M3 | **Connect GitHub:** the App flow, the Updates view generalized | a fresh install shows its repos' pipeline |
 | M4 | **Deploys:** desired state, signing, companion policy, stack secrets, pull credentials, tag bumps | a merge to main deploys to a companion with no other tooling |
 | M5 | **Git-backed config:** reading the repo, UI edits as commits or PRs | this homelab's argus.yml is edited from the UI |
+| M5b | **Getting started and patching:** a first-run checklist, check suggestions from a host's containers, adopting running stacks into the deploy repo, coverage per host; OS patching through companions with backup checks, pre-patch snapshots and optional restore tests (see below) | a fresh install gets its first host watched, patched on a schedule and deploying from git by following the checklist alone |
 | M6 | **Launch:** README, install guide, example config, screenshots, license; repo swap; this homelab on v2 | someone else could install it from the README alone |
 | after | **Security review and hardening** (see the roadmap) | findings fixed or documented |
 
@@ -206,3 +207,16 @@ Devin approved the design with each suggestion as written:
 3. **Stack secrets kept in Argus,** sent only to the host that runs the stack, with import from age files for this homelab.
 4. **Host patching through companions after launch;** v2 does deploys first.
 5. **Viewing open by default** on the LAN, with one switch to require the login for everything.
+
+## Decisions (approved 2026-10-30, later)
+
+6. **A guided first run** (Devin asked for it): a "Get started" checklist replaces the empty home page, one next step at a time (alerts, first host, checks suggested from its containers, patching, GitHub, deploys from git with "adopt" for stacks already running). Afterwards each host card shows its own next steps and the home page a coverage line. No page is a dead end; nothing needs a config file.
+7. **Host patching moves before launch** (replaces decision 4's "after launch"): a weekly window per host, never Sunday by default, one host at a time, a health check before the next.
+8. **Patching goes only as far as the host's safety net allows:**
+   - none: security updates only, said plainly;
+   - a recent backup that has not been restore-tested: security updates, and full upgrades and reboots only after the user accepts it;
+   - a snapshot before patching (Proxmox guests, ZFS or btrfs roots) or a restore-tested backup: full upgrades, reboots, rollback.
+
+   A backup location is not required. Argus checks backups (Proxmox task history; restic, borg and other tools report in as jobs) and never stores them. No fresh backup that week means no patch, and Argus says why.
+9. **Restore tests are optional and encouraged:** monthly, one guest or a sample of files at a time (Proxmox: restore to a temporary VM with no network, boot, check the guest agent, delete; restic or borg: their check plus a sampled restore compared by checksum). A failure pages. Hosts without one show it as a gap on their card and in the checklist.
+10. **Argus's own data is backed up too:** a one-click encrypted export of settings and secrets, and a home-page warning until there is one.
