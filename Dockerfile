@@ -1,5 +1,5 @@
 # The read-only UI: built and unit-tested here, shipped as static files only.
-FROM node:22.23.3-alpine AS ui
+FROM node:26.12.0-alpine AS ui
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ui/.npmrc ./
 RUN npm ci --no-audit --no-fund
