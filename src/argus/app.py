@@ -45,6 +45,7 @@ from argus.auth import COOKIE, SESSION_DAYS, Auth, AuthError, Session
 from argus.companions import REPORT_EVERY, EnrollError, Signer
 from argus.deploys import BRANCH, ENV_KEY, PULL_TOKEN, STACK, WRITE_TOKEN, Deploys
 from argus.metrics import registry
+from argus.patching import DAYS, REQUEST, Patching
 from argus.probes import Result
 from argus.runtime import Runtime
 from argus.settings import Settings, load_key
@@ -208,6 +209,36 @@ class RemoteResult(BaseModel):
     error: str = Field("", max_length=300)
 
 
+class LocalTime(BaseModel):
+    """The host's own clock: windows are in its local time."""
+
+    weekday: int = Field(ge=0, le=6)  # Monday is 0
+    time: str = Field(pattern=r"^\d\d:\d\d$")
+    date: str = Field(pattern=r"^\d{4}-\d\d-\d\d$")
+    zone: str = Field("", max_length=64)
+
+
+class PatchState(BaseModel):
+    run: int = Field(ge=0)
+    state: Literal["running", "rebooting", "ok", "failed"]
+    summary: str = Field("", max_length=500)
+    log: str = Field("", max_length=64 * 1024)
+    at: float | None = None
+
+
+class PatchPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    day: int = Field(ge=0, le=6)
+    time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    level: Literal["security", "full"] = "full"
+    reboot: bool = True
+    backup: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
+    restore: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
+    accept_untested: bool = False
+    allow_sunday: bool = False
+
+
 class Report(BaseModel):
     nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{16,64}$")
     version: str = Field("", max_length=100)
@@ -225,6 +256,9 @@ class Report(BaseModel):
     reboot_required: bool | None = None
     checks: list[RemoteResult] = Field([], max_length=1000)
     deploys: list[DeployResult] = Field([], max_length=200)
+    local: LocalTime | None = None
+    snapshot: str = Field("", max_length=20)  # "zfs" when the root can be snapshotted
+    patch: PatchState | None = None
 
 
 class DeploySettings(BaseModel):
@@ -354,6 +388,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         deploys = Deploys(settings, gh, rt.clock, Path(folder) if folder else None)
         app.state.deploys = alerter.deploys = deploys
         app.state.configsrc = configsrc.ConfigSource(rt, settings, gh, rt.clock)
+        app.state.patching = alerter.patching = Patching(rt.store.db, settings, rt, rt.clock)
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
         tasks = []
         if start_scheduler:
@@ -709,6 +744,32 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                 raise
         return src.view()
 
+    # --- patching ---
+
+    def host_named(request: Request, host: str) -> dict:
+        for c in rt(request).companions.views():
+            if c["name"] == host:
+                return c
+        raise HTTPException(404, "no such host")
+
+    @app.put("/api/patching/{host}")
+    async def patch_plan(host: str, body: PatchPlan, request: Request, _: Admin) -> dict:
+        c = host_named(request, host)
+        if body.day == 6 and not body.allow_sunday:
+            raise HTTPException(422, f"{DAYS[6]}s belong to backups; pick another day, or "
+                                     "allow Sundays for this host")
+        pt = request.app.state.patching
+        pt.set_plan(host, body.model_dump())
+        return pt.view(host, c["report"])
+
+    @app.post("/api/patching/{host}/now")
+    async def patch_now(host: str, request: Request, _: Admin) -> dict:
+        c = host_named(request, host)
+        if c["read_only"]:
+            raise HTTPException(409, f"{host} is monitoring only")
+        request.app.state.settings.set(REQUEST + host, True)
+        return request.app.state.patching.view(host, c["report"])
+
     # --- getting started ---
 
     @app.get("/api/start")
@@ -717,7 +778,9 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         companions = r.companions.views()
         return start.view(rt=r, alerts=st.alerter.summary(), gh_connected=st.gh.connected,
                           deploy_views=st.deploys.views(companions), companions=companions,
-                          hidden=st.settings.get(start.HIDDEN, False))
+                          hidden=st.settings.get(start.HIDDEN, False),
+                          patched=sum(1 for c in companions
+                                      if st.patching.plan(c["name"])["enabled"]))
 
     @app.put("/api/start")
     async def hide_start(body: StartHidden, request: Request, _: Admin) -> dict:
@@ -784,6 +847,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         for v in views:
             v["checks"] = [check_view(r, c) for c in r.companion_checks(v["name"])]
             v["stacks"] = stacks.get(v["name"], [])
+            v["patching"] = request.app.state.patching.view(v["name"], v["report"])
         named = {c.companion for c in r.config.checks if c.companion}
         return {"companions": views, "report_every": REPORT_EVERY, "now": r.clock(),
                 "tls_pin": request.app.state.tls_pin is not None,
@@ -850,6 +914,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             r.record_remote(row["name"], c.name, Result(c.ok, c.duration, c.error))
         r.companions.save_report(row["id"], rep.model_dump(exclude={"nonce", "checks"}),
                                  address(request))
+        pt = request.app.state.patching
+        pt.record(row["name"], rep.patch and rep.patch.model_dump())
         body = {
             "name": row["name"],
             "report_every": REPORT_EVERY,
@@ -866,6 +932,9 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             due = any((s["path"], s["digest"]) not in done for s in stacks)
             body["deploy"] = {"commit": d.snapshot.commit, "stacks": stacks,
                               "pull": await d.pull_credential() if due else None}
+        run = pt.grant(row["name"], bool(row["read_only"]), rep.model_dump())
+        if run:
+            body["patch"] = run
         reply = json.dumps(body, separators=(",", ":")).encode()
         sig = request.app.state.signer.sign(row["id"], rep.nonce, reply)
         return Response(reply, media_type="application/json",

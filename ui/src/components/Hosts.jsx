@@ -228,7 +228,115 @@ function Stacks({ stacks, session, reload }) {
   );
 }
 
-function Host({ host, session, onRemoved, suggestions, onWatch }) {
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const RUN_TONE = { ok: "up", failed: "down", running: "accent", granted: "accent", rebooting: "accent" };
+
+function PatchForm({ host, session, refs, onSaved, onCancel }) {
+  const [p, setP] = useState(host.patching.plan);
+  const [error, setError] = useState(null);
+  const set = (k, v) => setP({ ...p, [k]: v });
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      await send("PUT", `/api/patching/${host.name}`, { ...p, day: Number(p.day) }, session.csrf);
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  return (
+    <form className="patch-form" onSubmit={save}>
+      <label className="toggle"><input type="checkbox" checked={p.enabled} onChange={(e) => set("enabled", e.target.checked)} />
+        <span><strong>Patch this host every week</strong></span></label>
+      <div className="form-grid">
+        <label className="field"><span>Day</span>
+          <select value={p.day} onChange={(e) => set("day", Number(e.target.value))}>
+            {DAYS.map((d, i) => (i < 6 || p.allow_sunday) && <option key={d} value={i}>{d}</option>)}
+          </select></label>
+        <label className="field"><span>Time (the host's clock)</span>
+          <input type="time" value={p.time} onChange={(e) => set("time", e.target.value)} required /></label>
+        <label className="field"><span>Updates</span>
+          <select value={p.level} onChange={(e) => set("level", e.target.value)}>
+            <option value="full">All, when its safety net allows</option>
+            <option value="security">Security only</option>
+          </select></label>
+        <label className="field"><span>Its backup</span>
+          <select value={p.backup} onChange={(e) => set("backup", e.target.value)}>
+            <option value="">None yet</option>
+            {refs.map((r) => <option key={r} value={r}>{r.replace(":", ": ")}</option>)}
+          </select></label>
+        <label className="field"><span>Its restore test (optional)</span>
+          <select value={p.restore} onChange={(e) => set("restore", e.target.value)}>
+            <option value="">None</option>
+            {refs.map((r) => <option key={r} value={r}>{r.replace(":", ": ")}</option>)}
+          </select></label>
+      </div>
+      <small className="muted">
+        A backup or restore test is a job or timer that reports to Argus when it finishes. No fresh
+        backup (8 days) means no patch that week. A monthly restore test is optional, and lets
+        Argus install all updates and reboot.
+      </small>
+      <label className="toggle"><input type="checkbox" checked={p.reboot} onChange={(e) => set("reboot", e.target.checked)} />
+        <span>Reboot when an update needs it<small>Only when the safety net allows all updates.</small></span></label>
+      <label className="toggle"><input type="checkbox" checked={p.accept_untested} onChange={(e) => set("accept_untested", e.target.checked)} />
+        <span>Allow all updates with a backup that was never restore-tested</span></label>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="actions">
+        <button className="btn btn-primary">Save</button>
+        <button className="btn" type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function Patching({ host, session, refs, reload }) {
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState(null);
+  const pt = host.patching;
+  if (!pt) return null;
+  const last = pt.runs[0];
+  const now = async () => {
+    try {
+      await send("POST", `/api/patching/${host.name}/now`, {}, session.csrf);
+      reload();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  return (
+    <section>
+      <h4 className="eyebrow">patching</h4>
+      <p className="small">
+        {pt.plan.enabled
+          ? <>{pt.allowed[0].toUpperCase() + pt.allowed.slice(1)}, {DAYS[pt.plan.day]}s at {pt.plan.time} (host time).</>
+          : "Not patched by Argus."}{" "}
+        <span className="muted">Safety net: {pt.safety.net}.</span>
+      </p>
+      {pt.skipped && <p className="small st-failing">Not patched: {pt.skipped}.</p>}
+      {last && (
+        <p className="small">
+          <span className={`st-${RUN_TONE[last.result] ?? "unknown"}`}>
+            {last.result === "granted" ? "starting" : last.result}
+          </span>{" "}
+          {agoText(Date.now() / 1000 - last.requested)}{last.summary && `: ${last.summary}`}
+        </p>
+      )}
+      {last?.log && last.result === "failed" && <pre className="log small">{last.log.slice(-1500)}</pre>}
+      {pt.requested && <p className="small muted">Patching on its next report, within a minute.</p>}
+      {session?.signed_in && !host.read_only && !editing && (
+        <div className="actions">
+          <button className="link-button small" onClick={() => setEditing(true)}>{pt.plan.enabled ? "Change the schedule" : "Choose a window"}</button>
+          <button className="link-button small" onClick={now} disabled={pt.requested || last?.result === "running"}>Patch now</button>
+        </div>
+      )}
+      {editing && <PatchForm host={host} session={session} refs={refs}
+                             onSaved={() => { setEditing(false); reload(); }} onCancel={() => setEditing(false)} />}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+function Host({ host, session, onRemoved, suggestions, onWatch, refs }) {
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState(null);
   const r = host.report;
@@ -279,6 +387,7 @@ function Host({ host, session, onRemoved, suggestions, onWatch }) {
           ))}</ul>
         </section>
       )}
+      <Patching host={host} session={session} refs={refs} reload={onRemoved} />
       {(r?.updates || r?.reboot_required) && (
         <section>
           <h4 className="eyebrow">updates</h4>
@@ -323,7 +432,7 @@ function Host({ host, session, onRemoved, suggestions, onWatch }) {
   );
 }
 
-export default function Hosts({ data, session, reload, start }) {
+export default function Hosts({ data, session, reload, start, refs = [] }) {
   const [adding, setAdding] = useState(false);
   const hosts = data?.companions ?? [];
   const quiet = hosts.filter((h) => h.status === "quiet").length;
@@ -353,7 +462,7 @@ export default function Hosts({ data, session, reload, start }) {
       )}
       <div className="hosts">
         {hosts.map((h) => (
-          <Host key={h.id} host={h} session={session} onRemoved={reload}
+          <Host key={h.id} host={h} session={session} onRemoved={reload} refs={refs}
                 suggestions={(start?.suggestions ?? []).filter((g) => g.host === h.name)}
                 onWatch={(c) => { window.location.hash = ""; window.dispatchEvent(new CustomEvent("argus-watch", { detail: c })); }} />
         ))}

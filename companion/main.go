@@ -80,7 +80,7 @@ func main() {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
-		run(ctx, c, newDeployer(*state, *policy))
+		run(ctx, c, newDeployer(*state, *policy), *state)
 	case "policy":
 		b, _ := json.MarshalIndent(defaultPolicy(), "", "  ")
 		fmt.Println(string(b))
@@ -97,11 +97,13 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, c *Config, deployer *Deployer) {
+func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	log.Info("starting", "version", version, "argus", c.URL, "name", c.Name,
 		"read_only", c.ReadOnly)
 	client, collector, checker := pinnedClient(c.Pin), newCollector(), newChecker()
+	patcher := newPatcher(stateDir, collector)
+	go patcher.AfterBoot() // a run that asked for a reboot finishes now
 	go checker.Loop(ctx)
 	every, failing := 60*time.Second, false
 	var plan *DeployPlan
@@ -117,6 +119,8 @@ func run(ctx context.Context, c *Config, deployer *Deployer) {
 		report := collector.Collect(c.ReadOnly)
 		report.Checks = checker.Take()
 		report.Deploys = deployer.Results(plan)
+		// The patch state is not sent in the snapshot taken before a run starts.
+		report.Patch = patcher.State()
 		reply, err := sendReport(client, c, report)
 		wait = every
 		if err != nil {
@@ -141,6 +145,18 @@ func run(ctx context.Context, c *Config, deployer *Deployer) {
 			wait = every
 		}
 		// Monitoring-only is the host's own choice: it holds whatever Argus says.
+		if g := reply.Patch; g != nil && !c.ReadOnly && !patcher.Busy() {
+			if st := patcher.State(); st == nil || st.Run != g.Run {
+				log.Info("patching", "run", g.Run, "level", g.Level, "reboot", g.Reboot)
+				go func() {
+					patcher.Start(g)
+					log.Info("patch run ended", "run", g.Run, "state", patcher.State().State)
+				}()
+			}
+		}
+		if patcher.Busy() || (patcher.State() != nil && patcher.State().At > float64(time.Now().Add(-every).Unix())) {
+			wait = min(wait, 15*time.Second) // report a run's progress and end promptly
+		}
 		if !c.ReadOnly && reply.Deploy != nil {
 			plan = reply.Deploy
 			if deployer.Apply(plan) {

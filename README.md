@@ -21,6 +21,19 @@ Open https://localhost:8080 (the certificate is Argus's own, so the browser warn
 
 A new install shows a short checklist on its home page: make sure alerts reach you, add a host, watch what matters, connect GitHub, deploy from git. One step is open at a time, with a line on why it matters and one button. Once a host reports, Argus suggests a check for each port its containers publish ("jellyfin :8096 on nas"); **Watch** fills in the form. Afterwards a coverage line ("12 of 15 published services watched · 4 of 4 hosts reporting") and each host's "not watched yet" list show what to do next. The checklist can be hidden.
 
+## Patching
+
+Each host's card has **Choose a window**: a weekday and time on the host's own clock. In the window, the host's companion asks Argus, and Argus decides. It never patches on a Sunday (backups run then, unless you allow it for a host), patches one host at a time, and never patches a monitoring-only host. Updates run in a transient systemd unit, outside the companion's sandbox. Afterwards every container that ran before must run again (and be healthy, if it has a health check), then the host reboots if an update needs it and its safety net allows it. A failed run, a run with no result for two hours, or a window skipped for a stale backup pages you. **Patch now** runs once, outside the window, by the same rules.
+
+How far Argus goes depends on the host's safety net. No backup location is required:
+
+| Safety net | Argus installs |
+| --- | --- |
+| None, or a backup never restore-tested | security updates only, no reboots |
+| A fresh backup you accepted untested, a fresh backup with a restore test in the last 35 days, or a ZFS root (snapshotted before each run) | all updates, and reboots when needed |
+
+A backup or restore test is any job or timer that reports to Argus (`POST /job/<name>` or `/heartbeat/<name>`) when it finishes. Name it on the host's card; no fresh backup (8 days) means no patch that week, and Argus says why. Restore tests are optional, and encouraged: they are how you know a backup works.
+
 ## Config
 
 Everything Argus watches is one YAML file, `argus.yml`. Change single checks on the Checks page (**Add a check**, or **Change** in a check's panel), or the whole file on the Config page. Argus checks every change before saving; a mistake is shown and nothing changes. Comments and layout in the file are kept: an edit changes only its own lines.

@@ -31,7 +31,8 @@ def host(c, csrf, name, containers, address_override=None):
 def test_a_new_install_starts_with_nothing_done(client):
     c, _ = client
     s = c.get("/api/start").json()
-    assert [x["key"] for x in s["steps"]] == ["alerts", "host", "checks", "github", "deploys"]
+    assert [x["key"] for x in s["steps"]] == [
+        "alerts", "host", "checks", "patching", "github", "deploys"]
     assert s["done"] == 0 and not s["hidden"] and s["suggestions"] == []
 
 
