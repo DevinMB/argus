@@ -1,12 +1,14 @@
 // argus-companion reports one host to Argus and runs checks from inside it.
 //
 //	argus-companion enroll --url URL [--pin PIN] --code CODE [--read-only] [--config PATH]
-//	argus-companion run [--config PATH] [--once]
+//	argus-companion run [--config PATH] [--state DIR] [--policy PATH] [--once]
 //	argus-companion report [--config PATH]   print the report it would send
+//	argus-companion policy                   print the default policy file
 //	argus-companion version
 //
-// It only ever calls Argus (HTTPS, pinned); nothing listens on the host. In
-// M2 it reads and reports; it changes nothing on the host.
+// It only ever calls Argus (HTTPS, pinned); nothing listens on the host. It
+// reports, runs checks, and deploys the stacks Argus's signed reply names,
+// within the host's policy file, unless it was enrolled monitoring-only.
 package main
 
 import (
@@ -26,7 +28,11 @@ import (
 
 var version = "dev" // set at build time
 
-const defaultConfig = "/etc/argus-companion/companion.json"
+const (
+	defaultConfig = "/etc/argus-companion/companion.json"
+	policyFile    = "/etc/argus-companion/policy.json"
+	defaultState  = "/var/lib/argus-companion"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -57,6 +63,8 @@ func main() {
 		fmt.Printf("enrolled as %q; the enrollment is in %s\n", c.Name, *config)
 	case "run":
 		once := fs.Bool("once", false, "send one report and exit")
+		state := fs.String("state", defaultState, "where deployed stacks and their state live")
+		policy := fs.String("policy", policyFile, "what this host will never run")
 		_ = fs.Parse(args)
 		c, err := loadConfig(*config)
 		if err != nil {
@@ -72,7 +80,10 @@ func main() {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
-		run(ctx, c)
+		run(ctx, c, newDeployer(*state, *policy))
+	case "policy":
+		b, _ := json.MarshalIndent(defaultPolicy(), "", "  ")
+		fmt.Println(string(b))
 	case "report":
 		_ = fs.Parse(args)
 		readOnly := false
@@ -86,13 +97,14 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, c *Config) {
+func run(ctx context.Context, c *Config, deployer *Deployer) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	log.Info("starting", "version", version, "argus", c.URL, "name", c.Name,
 		"read_only", c.ReadOnly)
 	client, collector, checker := pinnedClient(c.Pin), newCollector(), newChecker()
 	go checker.Loop(ctx)
 	every, failing := 60*time.Second, false
+	var plan *DeployPlan
 	// A random start, so hosts that boot together do not report together.
 	wait := time.Duration(rand.Int64N(int64(5 * time.Second)))
 	for {
@@ -104,6 +116,7 @@ func run(ctx context.Context, c *Config) {
 		}
 		report := collector.Collect(c.ReadOnly)
 		report.Checks = checker.Take()
+		report.Deploys = deployer.Results(plan)
 		reply, err := sendReport(client, c, report)
 		wait = every
 		if err != nil {
@@ -127,11 +140,19 @@ func run(ctx context.Context, c *Config) {
 			every = time.Duration(reply.ReportEvery) * time.Second
 			wait = every
 		}
+		// Monitoring-only is the host's own choice: it holds whatever Argus says.
+		if !c.ReadOnly && reply.Deploy != nil {
+			plan = reply.Deploy
+			if deployer.Apply(plan) {
+				log.Info("deployed", "commit", plan.Commit)
+				wait = time.Second // report how it went at once
+			}
+		}
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: argus-companion enroll|run|report|version [--config PATH]")
+	fmt.Fprintln(os.Stderr, "usage: argus-companion enroll|run|report|policy|version [--config PATH]")
 	os.Exit(2)
 }
 

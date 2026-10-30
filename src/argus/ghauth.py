@@ -143,6 +143,25 @@ class AppCredentials:
         self._tokens[iid] = (r.json()["token"], self.clock() + 3600)
         return self._tokens[iid][0]
 
+    async def pull_token(self, owner: str) -> str | None:
+        """A token that can only read packages, for one deploy's image pulls.
+        Kept for its hour like the others, so a busy minute makes one, not many."""
+        installs = await self._list()
+        match = [i for i in installs if i["account"].lower() == owner.lower()]
+        if not match:
+            return None
+        key = -match[0]["id"]  # beside the full token for the same installation
+        tok = self._tokens.get(key)
+        if tok and tok[1] - self.clock() > 300:
+            return tok[0]
+        r = await self.client.post(
+            f"{API}/app/installations/{match[0]['id']}/access_tokens",
+            headers={**HEADERS, "Authorization": f"Bearer {self.jwt()}"},
+            json={"permissions": {"packages": "read"}})
+        r.raise_for_status()
+        self._tokens[key] = (r.json()["token"], self.clock() + 3600)
+        return self._tokens[key][0]
+
     async def token_for(self, owner: str | None) -> str | None:
         installs = await self._list()
         match = [i for i in installs if owner and i["account"].lower() == owner.lower()]

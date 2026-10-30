@@ -36,6 +36,17 @@ On **Hosts**, press **Add a host** and run the command it shows on the host. It 
 - A host that misses three reports, or a disk past 95%, pages.
 - `argus-companion report` prints what it would send, without sending it.
 
+## Deploys
+
+One repo says what each host runs: `hosts/<host>` lists stack folders (one per line), and each folder holds a `compose.yml` and any files next to it. Pick it on the GitHub page. Each host's companion deploys its stacks when they change: `docker compose pull`, then `up --wait` until healthy, and back to the previous files if it is not.
+
+- **The host's policy decides.** `/etc/argus-companion/policy.json` on each host lists what it will never run: by default privileged containers, the host's network or PID namespace, the Docker socket, devices, risky capabilities, and binds from outside `/srv`, `/opt`, `/mnt`, `/media` or the stack's own folder. Argus cannot change it; a stack that breaks it is refused before anything is written, and pages.
+- **Secrets** for a stack are set on the Hosts page, kept encrypted in Argus, and written to the stack's `.env` (root only) on the host that runs it, nowhere else.
+- **Private images:** the companion pulls with a credential Argus sends with that deploy only; it is never stored on the host.
+- Hosts enrolled **monitoring only** never deploy.
+- Stacks live in `/var/lib/argus-companion/stacks/<name>`; data a stack keeps in its folder (`./data`) is never touched by a deploy.
+- Without GitHub, `ARGUS_DEPLOY_DIR` points Argus at a folder with the same layout.
+
 ## Develop
 
 ```bash

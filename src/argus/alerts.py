@@ -158,6 +158,7 @@ class Alerter:
         self.db: sqlite3.Connection = runtime.store.db
         self.db.executescript(SCHEMA)
         self._retry_at = 0.0
+        self.deploys = None  # set by the app: failed deploys page under "companions"
 
     # --- settings, as the UI sees them ---
 
@@ -249,6 +250,16 @@ class Alerter:
                         f"No report from its companion for {_ago(c['age'])}"
                         f" (limit {_ago(QUIET_AFTER)}).", "#/hosts")
                     continue
+                if self.deploys is not None:
+                    for v in self.deploys.views([c]):
+                        for st in v["stacks"]:
+                            if st["status"] in ("failed", "refused", "rolled_back"):
+                                word = {"refused": "was refused by its policy",
+                                        "rolled_back": "failed and was rolled back"}.get(
+                                            st["status"], "failed")
+                                out[f"deploy:{c['name']}:{st['path']}"] = Problem(
+                                    f"deploy of {st['name']} on {c['name']} {word}",
+                                    st["detail"][-300:] or "See the Hosts page.", "#/hosts")
                 for d in (c["report"] or {}).get("disks", []):
                     if d["total"] and d["used"] / d["total"] >= DISK_FULL:
                         out[f"disk:{c['name']}:{d['mount']}"] = Problem(
