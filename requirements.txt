@@ -7,3 +7,4 @@ PyYAML==6.0.3
 prometheus-client==0.26.0
 cryptography==50.0.2
 argon2-cffi==25.1.0
+ruamel.yaml==0.19.1
