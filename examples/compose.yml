@@ -1,0 +1,15 @@
+# Argus, as most people run it. Then: docker compose up -d, and open
+# https://<this machine>:8443 with the setup code from `docker compose logs argus`.
+services:
+  argus:
+    image: ghcr.io/devinmb/argus:2
+    ports: ["8443:8080"]
+    volumes:
+      - argus-data:/data          # the database and the key to its secrets: back it up
+      # - ./argus.yml:/config/argus.yml:ro   # only if you prefer a config file
+    cap_add: [NET_RAW]            # for ping checks
+    restart: unless-stopped
+    # environment:
+    #   ARGUS_TLS: "off"          # behind a reverse proxy that does HTTPS
+volumes:
+  argus-data:
