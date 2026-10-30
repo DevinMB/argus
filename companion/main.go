@@ -107,6 +107,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 	go checker.Loop(ctx)
 	every, failing := 60*time.Second, false
 	var plan *DeployPlan
+	var collected []Collected
 	// A random start, so hosts that boot together do not report together.
 	wait := time.Duration(rand.Int64N(int64(5 * time.Second)))
 	for {
@@ -121,6 +122,11 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 		report.Deploys = deployer.Results(plan)
 		// The patch state is not sent in the snapshot taken before a run starts.
 		report.Patch = patcher.State()
+		if p, err := loadPolicy(deployer.PolicyPath); err == nil {
+			report.PolicyRoots = p.BindRoots
+		}
+		report.Collected = collected
+		collected = nil
 		reply, err := sendReport(client, c, report)
 		wait = every
 		if err != nil {
@@ -156,6 +162,18 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 		}
 		if patcher.Busy() || (patcher.State() != nil && patcher.State().At > float64(time.Now().Add(-every).Unix())) {
 			wait = min(wait, 15*time.Second) // report a run's progress and end promptly
+		}
+		// Adoption: read the named projects' files for the next report. Never on a
+		// monitoring-only host, whose files are not Argus's to take.
+		if len(reply.Collect) > 0 && !c.ReadOnly && report.Containers != nil {
+			for _, name := range reply.Collect {
+				got := collect(name, report.Containers)
+				if got.Error == "" {
+					deployer.markAdopted(got.Dir)
+				}
+				collected = append(collected, got)
+			}
+			wait = time.Second
 		}
 		if !c.ReadOnly && reply.Deploy != nil {
 			plan = reply.Deploy

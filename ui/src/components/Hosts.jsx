@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { send } from "../api.js";
+import Adopt from "./Adopt.jsx";
 import { agoText, bytes, containerTrouble, diskTone, hostSentence, sortContainers } from "../lib.js";
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
@@ -336,6 +337,29 @@ function Patching({ host, session, refs, reload }) {
   );
 }
 
+function NotFromGit({ host, session, reload }) {
+  const [open, setOpen] = useState(null);
+  if (!host.adoptable?.length) return null;
+  return (
+    <section>
+      <h4 className="eyebrow">running here, not from git</h4>
+      <ul className="host-list suggest">{host.adoptable.map((p) => (
+        <li key={p.project}>
+          <span className="dot dot-unknown" />
+          <span className="host-item">{p.project} <span className="muted mono">{p.dir}</span></span>
+          {session?.signed_in && open !== p.project && <button className="btn" onClick={() => setOpen(p.project)}>Deploy from git</button>}
+          {open === p.project && (
+            <div className="host-wide">
+              <Adopt host={host.name} project={p} session={session}
+                     onDone={() => { setOpen(null); reload(); }} onCancel={() => setOpen(null)} />
+            </div>
+          )}
+        </li>
+      ))}</ul>
+    </section>
+  );
+}
+
 function Host({ host, session, onRemoved, suggestions, onWatch, refs }) {
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState(null);
@@ -367,6 +391,7 @@ function Host({ host, session, onRemoved, suggestions, onWatch, refs }) {
         <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
       )}
       {r?.containers && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} /></section>}
+      <NotFromGit host={host} session={session} reload={onRemoved} />
       {suggestions?.length > 0 && (
         <section>
           <h4 className="eyebrow">not watched yet</h4>

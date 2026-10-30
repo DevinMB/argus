@@ -135,6 +135,16 @@ class Auth:
             with self.db:
                 self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (_digest(token),))
 
+    def confirm(self, password: str, address: str) -> None:
+        """The admin's password again, for the most sensitive actions (an export of
+        every secret). Rate-limited like a sign-in."""
+        self._throttle(address)
+        try:
+            self.hasher.verify(self.settings.get(HASH_KEY), password)
+        except (VerificationError, InvalidHashError):
+            self._failed(address)
+            raise AuthError(403, "the password is wrong") from None
+
     def change_password(self, token: str, current: str, new: str, address: str) -> str:
         """Signs out every other session; returns a fresh one for this browser."""
         self._throttle(address)

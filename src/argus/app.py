@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -31,7 +32,8 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from argus import configsrc, ghauth, github, start
+from argus import backup, configsrc, ghauth, github, start
+from argus.adopt import Adoption
 from argus.alerts import (
     ALERTMANAGER_EXAMPLE,
     TOKEN,
@@ -176,6 +178,8 @@ class Container(BaseModel):
     status: str = Field("", max_length=200)  # Docker's words: "Up 3 hours (healthy)"
     project: str = Field("", max_length=200)  # the compose project, if any
     ports: list[int] = Field([], max_length=100)  # published TCP ports
+    working_dir: str = Field("", max_length=500)  # its Compose project's folder
+    config_files: list[str] = Field([], max_length=20)
 
 
 class Disk(BaseModel):
@@ -207,6 +211,16 @@ class RemoteResult(BaseModel):
     ok: bool
     duration: float = Field(ge=0)
     error: str = Field("", max_length=300)
+
+
+class CollectedProject(BaseModel):
+    """A project's files, read by the companion for adoption. Never stored."""
+
+    project: str = Field(max_length=100)
+    dir: str = Field("", max_length=500)
+    files: dict[str, str] = Field({}, max_length=20)
+    env: str = Field("", max_length=64 * 1024)
+    error: str = Field("", max_length=500)
 
 
 class LocalTime(BaseModel):
@@ -259,6 +273,8 @@ class Report(BaseModel):
     local: LocalTime | None = None
     snapshot: str = Field("", max_length=20)  # "zfs" when the root can be snapshotted
     patch: PatchState | None = None
+    policy_roots: list[str] = Field([], max_length=50)
+    collected: list[CollectedProject] = Field([], max_length=20)
 
 
 class DeploySettings(BaseModel):
@@ -296,6 +312,18 @@ class ConfigEntry(BaseModel):
     entry: dict = Field(max_length=40)
     replace: str | None = Field(None, max_length=64)
     base: str = Field(max_length=64)
+
+
+class ExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: str = Field(max_length=1024)
+    passphrase: str = Field(min_length=12, max_length=1024)
+
+
+class ImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    data: str = Field(max_length=8 * 1024 * 1024)
+    passphrase: str = Field(max_length=1024)
 
 
 class StartHidden(BaseModel):
@@ -389,6 +417,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         app.state.deploys = alerter.deploys = deploys
         app.state.configsrc = configsrc.ConfigSource(rt, settings, gh, rt.clock)
         app.state.patching = alerter.patching = Patching(rt.store.db, settings, rt, rt.clock)
+        app.state.adoption = Adoption(settings, deploys, rt.clock)
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
         tasks = []
         if start_scheduler:
@@ -770,6 +799,62 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         request.app.state.settings.set(REQUEST + host, True)
         return request.app.state.patching.view(host, c["report"])
 
+    # --- Argus's own backup ---
+
+    @app.post("/api/export")
+    async def take_export(body: ExportRequest, request: Request, _: Admin) -> Response:
+        st = request.app.state
+        auth_call(st.auth.confirm, body.password, address(request))
+        blob = backup.export(st.settings, rt(request).db_path.parent, body.passphrase)
+        st.settings.set(backup.TAKEN, rt(request).clock())
+        day = time.strftime("%Y-%m-%d", time.gmtime(rt(request).clock()))
+        return Response(blob, media_type="application/json", headers={
+            "Content-Disposition": f'attachment; filename="argus-export-{day}.json"'})
+
+    @app.post("/api/import")
+    async def take_import(body: ImportRequest, request: Request, response: Response,
+                          _: Admin) -> dict:
+        st, r = request.app.state, rt(request)
+        try:
+            out = backup.restore(st.settings, r.db_path.parent, body.data.encode(),
+                                 body.passphrase)
+        except backup.BackupError as e:
+            raise HTTPException(400, str(e)) from None
+        # Carry on as the restored install: its signing key, GitHub, config.
+        st.signer = Signer(st.settings)
+        st.gh.connect(ghauth.credentials(st.settings, st.gh_client, TOKEN_FILE, r.clock))
+        if st.configsrc.source() == "argus":
+            r.apply_text(st.settings.get(configsrc.TEXT) or configsrc.STARTER)
+        await st.deploys.refresh()
+        response.delete_cookie(COOKIE, path="/")
+        return {**out, "signed_out": True}
+
+    # --- adopting running stacks, in place ---
+
+    @app.post("/api/adopt/{host}/{project}/read")
+    async def adopt_read(host: str, project: str, request: Request, _: Admin) -> dict:
+        c = host_named(request, host)
+        if c["read_only"]:
+            raise HTTPException(409, f"{host} is monitoring only, so Argus does not take its files")
+        if not any(p["project"] == project for p in request.app.state.adoption.projects(c)):
+            raise HTTPException(404, f"no running Compose project {project} on {host}")
+        request.app.state.adoption.request(host, project)
+        return request.app.state.adoption.preview(c, project)
+
+    @app.get("/api/adopt/{host}/{project}")
+    async def adopt_preview(host: str, project: str, request: Request, _: Admin) -> dict:
+        return request.app.state.adoption.preview(host_named(request, host), project)
+
+    @app.post("/api/adopt/{host}/{project}")
+    async def adopt_commit(host: str, project: str, request: Request, _: Admin) -> dict:
+        try:
+            sha = await request.app.state.adoption.adopt(host_named(request, host), project)
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"GitHub said no: {type(e).__name__}") from None
+        return {"commit": sha}
+
     # --- getting started ---
 
     @app.get("/api/start")
@@ -780,7 +865,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                           deploy_views=st.deploys.views(companions), companions=companions,
                           hidden=st.settings.get(start.HIDDEN, False),
                           patched=sum(1 for c in companions
-                                      if st.patching.plan(c["name"])["enabled"]))
+                                      if st.patching.plan(c["name"])["enabled"]),
+                          exported_at=st.settings.get(backup.TAKEN))
 
     @app.put("/api/start")
     async def hide_start(body: StartHidden, request: Request, _: Admin) -> dict:
@@ -848,6 +934,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             v["checks"] = [check_view(r, c) for c in r.companion_checks(v["name"])]
             v["stacks"] = stacks.get(v["name"], [])
             v["patching"] = request.app.state.patching.view(v["name"], v["report"])
+            v["adoptable"] = [] if v["read_only"] else request.app.state.adoption.projects(v)
         named = {c.companion for c in r.config.checks if c.companion}
         return {"companions": views, "report_every": REPORT_EVERY, "now": r.clock(),
                 "tls_pin": request.app.state.tls_pin is not None,
@@ -912,8 +999,13 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             raise HTTPException(422, e.errors(include_url=False, include_context=False)) from None
         for c in rep.checks:
             r.record_remote(row["name"], c.name, Result(c.ok, c.duration, c.error))
-        r.companions.save_report(row["id"], rep.model_dump(exclude={"nonce", "checks"}),
+        # Collected files (with a .env) stay in memory for the preview, never stored.
+        r.companions.save_report(row["id"],
+                                 rep.model_dump(exclude={"nonce", "checks", "collected"}),
                                  address(request))
+        if not row["read_only"]:
+            request.app.state.adoption.received(row["name"],
+                                                [c.model_dump() for c in rep.collected])
         pt = request.app.state.patching
         pt.record(row["name"], rep.patch and rep.patch.model_dump())
         body = {
@@ -932,6 +1024,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             due = any((s["path"], s["digest"]) not in done for s in stacks)
             body["deploy"] = {"commit": d.snapshot.commit, "stacks": stacks,
                               "pull": await d.pull_credential() if due else None}
+        if not row["read_only"] and (want := request.app.state.adoption.to_collect(row["name"])):
+            body["collect"] = want
         run = pt.grant(row["name"], bool(row["read_only"]), rep.model_dump())
         if run:
             body["patch"] = run

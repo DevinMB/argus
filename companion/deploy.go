@@ -25,8 +25,9 @@ type StackSpec struct {
 	Path   string            `json:"path"`
 	Name   string            `json:"name"`
 	Digest string            `json:"digest"`
-	Files  map[string]string `json:"files"` // relative path -> base64
-	Env    string            `json:"env"`   // the stack's .env, from Argus's sealed secrets
+	Files  map[string]string `json:"files"`         // relative path -> base64
+	Env    string            `json:"env"`           // the stack's .env, from Argus's sealed secrets
+	Dir    string            `json:"dir,omitempty"` // adopted: deploy in its own folder
 }
 
 // PullCred is short-lived registry read access, used for one pull and never stored.
@@ -170,6 +171,12 @@ func (d *Deployer) one(s *deployState, st StackSpec, pull *PullCred) DeployResul
 		files[name] = b
 	}
 	dir := filepath.Join(d.StacksDir, st.Name)
+	if st.Dir != "" {
+		if err := d.inPlace(st.Dir); err != nil {
+			return res("refused", err.Error())
+		}
+		dir = filepath.Clean(st.Dir)
+	}
 
 	// 1. The policy, on the stack as Compose resolves it, before anything is written.
 	stage, err := os.MkdirTemp(d.StateDir, ".stage-")

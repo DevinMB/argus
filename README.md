@@ -75,6 +75,16 @@ One repo says what each host runs: `hosts/<host>` lists stack folders (one per l
 - Without GitHub, `ARGUS_DEPLOY_DIR` points Argus at a folder with the same layout.
 - **Tag bumps:** when a repo's main build is green, Argus rewrites `ghcr.io/<owner>/<repo>[-part]:sha-<commit>` in the deploy repo in one fast-forward commit, and the hosts deploy it. This needs a fine-grained token for the deploy repo alone (Contents: read and write); the GitHub App stays read-only. Updates then follows each change to "deployed" from the companions' own reports.
 
+### Adopting stacks that already run
+
+A host card lists the Compose projects running on it that git does not deploy yet. **Deploy from git** shows what would happen first: the compose files that go to the deploy repo, the secrets found in the project's `.env` (names only; their values are kept encrypted in Argus and never reach git), and the folder it stays in. Anything in the way is listed with its fix: no deploy repo or write token yet, a secret written into the compose file itself, or a folder outside what the host's policy allows. **Adopt** commits the files under `sites/<host>/<project>/` and adds it to `hosts/<host>`. The stack keeps running in its own folder, so data next to it (`./data`) never moves.
+
+Security: Argus only names the project. The companion finds its folder and compose files from Docker's own labels and reads only plain files inside that folder (no symlinks, at most 512 KB each); it later deploys in place only into folders it collected itself and its policy allows. Monitoring-only hosts never share files. What it collected is held in memory until you adopt it or 15 minutes pass.
+
+## Back up Argus
+
+Argus's data volume holds the key to every secret it keeps. **Account, Back up Argus** exports one file with the settings, secrets, hosts and Argus's certificate, encrypted under a passphrase you choose (scrypt and AES-256-GCM); it asks for the admin password again. **Restore from an export** on a new install carries on where the old one stopped: hosts keep reporting with their tokens, and replies are signed with the same key. Until an export exists, the home page reminds you.
+
 ## Develop
 
 ```bash

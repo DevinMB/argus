@@ -180,6 +180,7 @@ type Reply struct {
 	Checks      []CheckSpec `json:"checks"`
 	Deploy      *DeployPlan `json:"deploy"`
 	Patch       *PatchGrant `json:"patch"`
+	Collect     []string    `json:"collect"` // Compose projects to read for adoption
 }
 
 // Domain separates these signatures from anything else the key might sign.
