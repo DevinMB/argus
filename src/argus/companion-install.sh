@@ -58,7 +58,11 @@ fi
 [ -f /etc/argus-companion/policy.json ] || "$BIN" policy > /etc/argus-companion/policy.json
 
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  cat > /etc/systemd/system/argus-companion.service <<'UNIT'
+  # Deploys may write only where the host's policy lets stacks live; a "-" skips
+  # a folder that does not exist. Re-run this script after changing the policy.
+  RW=""
+  for r in $("$BIN" policy-roots --policy /etc/argus-companion/policy.json); do RW="$RW -$r"; done
+  cat > /etc/systemd/system/argus-companion.service <<UNIT
 [Unit]
 Description=Argus companion: reports this host to Argus
 After=network-online.target
@@ -68,8 +72,10 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/argus-companion run --config /etc/argus-companion/companion.json
 Restart=always
 RestartSec=10
-# It writes only its own folder: stacks it deploys live in /var/lib/argus-companion.
+# It writes its own folder (stacks it makes live in /var/lib/argus-companion) and,
+# for stacks it deploys in place, the folders its policy allows.
 StateDirectory=argus-companion
+ReadWritePaths=$RW
 StateDirectoryMode=0700
 Environment=DOCKER_CONFIG=/var/lib/argus-companion/docker
 NoNewPrivileges=yes

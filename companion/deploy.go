@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -225,6 +227,9 @@ func (d *Deployer) one(s *deployState, st StackSpec, pull *PullCred) DeployResul
 		}
 	}
 	if err := writeFiles(dir, files, st.Env); err != nil {
+		if errors.Is(err, syscall.EROFS) {
+			return res("failed", fmt.Sprintf("the companion's service may not write to %s: if its policy allows that folder now, run the Add a host command on this host again (without --code) to apply it", dir))
+		}
 		return res("failed", err.Error())
 	}
 	managed := make([]string, 0, len(files))

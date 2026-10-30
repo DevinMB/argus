@@ -150,7 +150,9 @@ jobs:
             curl -sk https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "deployed"' hosts.json >/dev/null && break; sleep 3
           done
+          jq '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | {status, detail}' hosts.json
           jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "deployed"' hosts.json
+          grep ReadWritePaths /etc/systemd/system/argus-companion.service
           test "$(docker inspect -f '{{.Id}}' hello2-web-1)" = "$before"  # not recreated
           curl -sf localhost:8098/keep.txt | grep -qx kept                # its data, in place
           sudo grep -q "GREETING='old'" /opt/legacy/hello2/.env           # its .env, now from Argus
