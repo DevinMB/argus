@@ -34,7 +34,10 @@ STUCK = 2 * 3600
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 DEFAULTS = {"enabled": False, "day": 1, "time": "03:00", "level": "full", "reboot": True,
-            "backup": "", "restore": "", "accept_untested": False, "allow_sunday": False}
+            "backup": "", "restore": "", "accept_untested": False, "allow_sunday": False,
+            # Patched by another tool (Ansible, unattended-upgrades, ...): Argus never
+            # patches it, and shows how that tool's job is doing when one is named.
+            "elsewhere": False, "elsewhere_job": ""}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS patch_runs (
@@ -144,6 +147,9 @@ class Patching:
         """A run for this host now, or None. Records why a due window was skipped."""
         self.expire()
         p = self.plan(host)
+        if p["elsewhere"]:
+            self.settings.set(REQUEST + host, None)
+            return None  # another tool patches this host; two would fight
         local = (report or {}).get("local") or {}
         manual = bool(self.settings.get(REQUEST + host))
         if not (p["enabled"] or manual) or read_only or not local.get("date"):
@@ -186,11 +192,37 @@ class Patching:
         return {"run": cur.lastrowid, "level": level, "reboot": reboot,
                 "snapshot": bool(safety["snapshot"])}
 
+    def elsewhere(self, p: dict) -> dict | None:
+        """How the other tool's job is doing, when the plan names one."""
+        ref = p["elsewhere_job"]
+        if not p["elsewhere"] or not ref:
+            return None
+        kind, _, name = ref.partition(":")
+        if kind == "job":
+            for j in self.rt.job_views():
+                if j["name"] == name:
+                    last = j["last"]
+                    return {"ref": ref, "title": j["title"] or name, "schedule": j["schedule"],
+                            "status": j["status"], "at": last and last["finished"],
+                            "summary": (last or {}).get("summary", "")}
+        elif kind == "heartbeat":
+            for h in self.rt.heartbeat_views():
+                if h["name"] == name:
+                    return {"ref": ref, "title": name, "schedule": "", "status": h["status"],
+                            "at": h["last_seen"], "summary": ""}
+        return {"ref": ref, "title": name, "schedule": "", "status": "never", "at": None,
+                "summary": f"{ref} is not in the config"}
+
+    def counts(self, host: str) -> bool:
+        """Whether the host is patched on a schedule, by Argus or by something else."""
+        p = self.plan(host)
+        return bool(p["enabled"] or p["elsewhere"])
+
     def view(self, host: str, report: dict | None) -> dict:
         p = self.plan(host)
         safety = self.safety(host, report)
         runs = self.runs(host)
-        return {"plan": p, "safety": safety, "runs": runs,
+        return {"plan": p, "safety": safety, "runs": runs, "elsewhere": self.elsewhere(p),
                 "skipped": self.skipped.get(host), "requested": bool(
                     self.settings.get(REQUEST + host)),
                 "allowed": "all updates, and reboots when needed" if safety["full"]

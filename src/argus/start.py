@@ -96,7 +96,8 @@ def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
         {"key": "patching", "done": patched > 0,
          "title": "Keep it patched",
          "why": "Pick a weekly window; Argus patches one host at a time, as far as its "
-                "backups make safe, and tells you how it went.",
+                "backups make safe, and tells you how it went. Already patched by "
+                "something else? Say so on the host's card.",
          "href": "#/hosts", "action": "Choose a window"},
         {"key": "github", "done": gh_connected,
          "title": "Connect GitHub",

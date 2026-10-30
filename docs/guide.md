@@ -10,6 +10,8 @@ A new install shows a short checklist on its home page: make sure alerts reach y
 
 Each host's card has **Choose a window**: a weekday and time on the host's own clock. In the window, the host's companion asks Argus, and Argus decides. It never patches on a Sunday (backups run then, unless you allow it for a host), patches one host at a time, and never patches a monitoring-only host. Updates run in a transient systemd unit, outside the companion's sandbox. Afterwards every container that ran before must run again (and be healthy, if it has a health check), then the host reboots if an update needs it and its safety net allows it. A failed run, a run with no result for two hours, or a window skipped for a stale backup pages you. **Patch now** runs once, outside the window, by the same rules.
 
+**Already patched by something else** (Ansible, unattended-upgrades, your hypervisor's tools)? Choose **Something else patches it** on the host's card, and optionally the job that does it. Argus then never patches that host, so two tools never fight over it; the card shows how that job's last run went, the checklist counts the host as patched, and a failed or late run pages as any job does.
+
 How far Argus goes depends on the host's safety net. No backup location is required:
 
 | Safety net | Argus installs |

@@ -132,3 +132,22 @@ def test_patch_now_stuck_runs_and_monitoring_only_hosts(env):
     assert nas_view["runs"][0]["result"] == "failed"
     assert "patching nas failed" in [p.title for p in c.app.state.alerter.problems().values()]
     assert c.put("/api/patching/nas", json=PLAN).status_code == 403  # an admin write
+
+
+def test_a_host_patched_by_something_else(env):
+    c, csrf, rt, clock = env
+    nas = enroll(c, csrf, "nas")
+    r = c.put("/api/patching/nas", headers=csrf, json={**PLAN, "elsewhere": True})
+    assert r.status_code == 422 and "would fight" in r.json()["detail"]
+    v = c.put("/api/patching/nas", headers=csrf, json={
+        **PLAN, "enabled": False, "elsewhere": True, "elsewhere_job": "job:nas-backup"}).json()
+    assert v["elsewhere"]["status"] == "never"
+    job_ok(c, rt, clock, "nas-backup")
+    view = c.get("/api/companions").json()["companions"][0]["patching"]
+    assert view["elsewhere"]["status"] == "ok" and view["elsewhere"]["at"] == clock.now
+    # Argus never patches it, in its window or on request.
+    assert "patch" not in report(c, nas, local=TUE_0305)
+    assert c.post("/api/patching/nas/now", headers=csrf).status_code == 409
+    # And the checklist counts it as patched.
+    steps = {s["key"]: s for s in c.get("/api/start").json()["steps"]}
+    assert steps["patching"]["done"]

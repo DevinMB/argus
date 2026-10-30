@@ -251,6 +251,8 @@ class PatchPlan(BaseModel):
     restore: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
     accept_untested: bool = False
     allow_sunday: bool = False
+    elsewhere: bool = False
+    elsewhere_job: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
 
 
 class Report(BaseModel):
@@ -784,6 +786,9 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
     @app.put("/api/patching/{host}")
     async def patch_plan(host: str, body: PatchPlan, request: Request, _: Admin) -> dict:
         c = host_named(request, host)
+        if body.enabled and body.elsewhere:
+            raise HTTPException(422, "a host patched by something else gets no Argus window: "
+                                     "two tools patching one host would fight")
         if body.day == 6 and not body.allow_sunday:
             raise HTTPException(422, f"{DAYS[6]}s belong to backups; pick another day, or "
                                      "allow Sundays for this host")
@@ -796,6 +801,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         c = host_named(request, host)
         if c["read_only"]:
             raise HTTPException(409, f"{host} is monitoring only")
+        if request.app.state.patching.plan(host)["elsewhere"]:
+            raise HTTPException(409, f"{host} is patched by something else")
         request.app.state.settings.set(REQUEST + host, True)
         return request.app.state.patching.view(host, c["report"])
 
@@ -864,8 +871,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         return start.view(rt=r, alerts=st.alerter.summary(), gh_connected=st.gh.connected,
                           deploy_views=st.deploys.views(companions), companions=companions,
                           hidden=st.settings.get(start.HIDDEN, False),
-                          patched=sum(1 for c in companions
-                                      if st.patching.plan(c["name"])["enabled"]),
+                          patched=sum(1 for c in companions if st.patching.counts(c["name"])),
                           exported_at=st.settings.get(backup.TAKEN))
 
     @app.put("/api/start")
