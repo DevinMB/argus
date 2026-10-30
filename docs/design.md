@@ -1,6 +1,6 @@
 # Argus v2 design
 
-Status: draft for Devin's approval, 2026-10-30. Nothing here is built yet.
+Status: approved by Devin 2026-10-30, with the five decisions below as suggested. M0 and M1 are under way.
 
 ## What v2 is
 
@@ -197,15 +197,12 @@ Each milestone ships something usable and goes through PRs with tests, like v1.
 
 M0 and M1 are the plan for Friday.
 
-## Decisions for Devin
+## Decisions (approved 2026-10-30)
 
-1. **License.**
-   - MIT: simplest; anyone can do anything.
-   - Apache-2.0: like MIT, plus a patent grant.
-   - AGPL-3.0: anyone who offers a modified Argus as a service must share their changes.
+Devin approved the design with each suggestion as written:
 
-   Suggestion: **Apache-2.0**.
-2. **HTTPS by default with a self-signed certificate,** pinned by companions. The alternative is plain HTTP on the LAN as in v1, which is simpler but weaker. Suggestion: **HTTPS by default**.
-3. **Stack secrets kept in Argus,** delivered only to their host, as described above. The alternative is to keep sops/age in git, but then every host needs a decryption key. Suggestion: **in Argus**, with import from age files for this homelab.
-4. **Host patching through companions** (apt and dnf upgrades on a schedule, with reboot windows and health checks, but without snapshots) as a later milestone after M6. Suggestion: **yes, after launch**; v2 does deploys first.
-5. **Viewing open by default** on the LAN, as in v1. Suggestion: **yes**, with the login switch one click away.
+1. **License: Apache-2.0** (like MIT, plus a patent grant).
+2. **HTTPS by default** with a self-signed certificate that companions pin. Bringing your own certificate or a proxy stays possible.
+3. **Stack secrets kept in Argus,** sent only to the host that runs the stack, with import from age files for this homelab.
+4. **Host patching through companions after launch;** v2 does deploys first.
+5. **Viewing open by default** on the LAN, with one switch to require the login for everything.
