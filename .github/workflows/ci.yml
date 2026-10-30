@@ -71,6 +71,10 @@ jobs:
             curl -sk https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[0].status == "ok"' hosts.json >/dev/null && break; sleep 2
           done
+          if ! jq -e '.companions[0].status == "ok"' hosts.json >/dev/null; then
+            cat hosts.json; sudo journalctl -u argus-companion --no-pager | tail -30
+            sudo /usr/local/bin/argus-companion report | head -c 3000; exit 1
+          fi
           jq '.companions[0] | {name, status, containers: [.report.containers[].name], disks: [.report.disks[].mount]}' hosts.json
           jq -e '.companions[0].report.containers | map(.name) | index("argus")' hosts.json
           jq -e '.companions[0].report.disks | map(.mount) | index("/")' hosts.json
