@@ -1,0 +1,25 @@
+# An example argus.yml. You do not need one: Add a check on the Checks page
+# writes this file for you. Every field: docs/config.md.
+
+groups:
+  media: Jellyfin and the photo library
+  network: DNS and the way in
+
+checks:
+  # Pages you (severity: critical) when it stops answering three times in a row.
+  - {name: jellyfin, kind: http, target: "http://nas.lan:8096/health", group: media, severity: critical}
+  - {name: immich, kind: http, target: "http://nas.lan:2283/api/server/ping", group: media}
+  # Something Argus cannot reach, checked from inside the host by its companion.
+  - {name: immich-db, kind: tcp, target: "127.0.0.1:5432", group: media, companion: nas}
+  - {name: pihole, kind: tcp, target: "pi.lan:53", group: network, severity: critical}
+  - {name: router, kind: ping, target: 192.168.1.1, group: network}
+
+heartbeats:
+  # A timer that says "I ran": curl -fsS -X POST https://argus.lan:8443/heartbeat/photo-sync
+  - {name: photo-sync, max_age: 3600}
+
+jobs:
+  # A backup that reports how it went. Patching reads it: no fresh backup, no patch.
+  - {name: nas-backup, max_age: 691200, schedule: "Sundays 02:00", severity: critical}
+  # Optional, and encouraged: a restore test, so a backup is known to work.
+  - {name: nas-restore-test, max_age: 3024000, schedule: "Mondays 05:00"}
