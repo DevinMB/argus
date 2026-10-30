@@ -42,6 +42,8 @@ class Check(BaseModel):
     expect_status: tuple[int, ...] = (200,)
     verify_tls: bool = True
     description: str = ""
+    # Run from inside this host by its companion, for what Argus cannot reach.
+    companion: str = Field("", pattern=r"^$|" + NAME)
 
     @model_validator(mode="after")
     def _shape(self) -> Check:

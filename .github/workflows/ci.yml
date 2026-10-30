@@ -54,6 +54,35 @@ jobs:
           for _ in $(seq 30); do curl -sf localhost:8081/healthz && break; sleep 1; done
           curl -sf localhost:8081/api/info | grep -q '"sender":"argus"'
           docker exec bare python -m argus healthcheck
+      - name: A host added with one command shows its containers and disks
+        run: |
+          # The admin: the setup code from the log, then "Add a host" as the UI does it.
+          code=$(docker logs argus 2>&1 | grep -o 'Setup code: [0-9a-f-]*' | tail -1 | cut -d' ' -f3)
+          csrf=$(curl -sk -c jar -H 'content-type: application/json' \
+            -d "{\"code\":\"$code\",\"password\":\"ci password for the smoke test\"}" \
+            https://localhost:8080/api/setup | jq -r .csrf)
+          cmd=$(curl -sk -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' \
+            -d '{"url":"https://localhost:8080","name":"runner"}' \
+            https://localhost:8080/api/companions/codes | jq -r .command)
+          echo "$cmd" | grep -q -- '--pinnedpubkey sha256//'
+          # The one command, exactly as shown, on this runner (it has Docker and systemd).
+          sh -c "$cmd"
+          for _ in $(seq 30); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].status == "ok"' hosts.json >/dev/null && break; sleep 2
+          done
+          if ! jq -e '.companions[0].status == "ok"' hosts.json >/dev/null; then
+            cat hosts.json; sudo journalctl -u argus-companion --no-pager | tail -30
+            sudo /usr/local/bin/argus-companion report | head -c 3000; exit 1
+          fi
+          jq '.companions[0] | {name, status, containers: [.report.containers[].name], disks: [.report.disks[].mount]}' hosts.json
+          jq -e '.companions[0].report.containers | map(.name) | index("argus")' hosts.json
+          jq -e '.companions[0].report.disks | map(.mount) | index("/")' hosts.json
+          systemctl is-active argus-companion
+          # Removing the host revokes its token: the companion says so in its log.
+          id=$(jq -r '.companions[0].id' hosts.json)
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X DELETE https://localhost:8080/api/companions/$id
+          sudo /usr/local/bin/argus-companion run --once 2>&1 | grep -q 'HTTP 401'
       # No image push yet: v2 publishes to GHCR at launch (milestone M6).
 
   gate:

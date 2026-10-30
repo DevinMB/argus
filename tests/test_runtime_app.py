@@ -142,9 +142,12 @@ def test_every_write_but_the_timers_and_sign_in_needs_the_admin(client):
     paths = {(r.path, m) for r in client.app.routes for m in getattr(r, "methods", ())}
     writes = {(p, m) for p, m in paths if m not in ("GET", "HEAD")}
     open_writes = {("/heartbeat/{name}", "POST"), ("/job/{name}", "POST"),
-                   ("/api/setup", "POST"), ("/api/login", "POST")}
+                   ("/api/setup", "POST"), ("/api/login", "POST"),
+                   # A host's first call: the single-use code is its credential.
+                   ("/companion/enroll", "POST")}
     assert open_writes <= writes
     for p, m in writes - open_writes:
+        # (/companion/report answers 401 too: it wants a companion token.)
         assert client.request(m, p, json={}).status_code == 401, (m, p)
 
 

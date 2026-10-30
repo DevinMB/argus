@@ -3,8 +3,9 @@
 The Alerts page picks the sender:
 
 - `argus` (the default): this module pages through Telegram when a critical
-  check is down, a critical job fails or is overdue, or a critical heartbeat
-  goes quiet; it repeats while the problem lasts and says when it clears.
+  check is down, a critical job fails or is overdue, a critical heartbeat or
+  any companion goes quiet, or a disk a companion reports is almost full;
+  it repeats while the problem lasts and says when it clears.
 - `prometheus`: Argus stays quiet and /metrics plus the rules from
   prometheus_rules() do it, as in v1.
 
@@ -30,6 +31,7 @@ from typing import Literal, Protocol
 
 import httpx
 
+from argus.companions import DISK_FULL, QUIET_AFTER
 from argus.runtime import Runtime
 from argus.settings import Settings
 
@@ -42,7 +44,7 @@ RETRY_AFTER = 60  # seconds after a failed send
 WATCH_EVERY = 60  # seconds between dead-man pings
 SWITCH_WINDOW = 3600  # a test must be this recent to switch senders
 PROM_TEST_FOR = 15 * 60  # how long argus_alert_test stays 1
-DEFAULT_RULES = {"checks": True, "jobs": True, "heartbeats": True}
+DEFAULT_RULES = {"checks": True, "jobs": True, "heartbeats": True, "companions": True}
 DEFAULT_REPEAT = 240  # minutes; 0 means never repeat
 
 TOKEN = "alerts.telegram.token"  # noqa: S105 (a setting name, not a secret)
@@ -118,6 +120,14 @@ async def recent_chats(token: str, client: httpx.AsyncClient) -> list[dict]:
             chats[chat["id"]] = {"id": str(chat["id"]), "name": name[:64],
                                  "kind": chat.get("type", "")}
     return list(chats.values())
+
+
+def _size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return ""
 
 
 @dataclass(frozen=True)
@@ -231,6 +241,20 @@ class Alerter:
                     out[f"heartbeat:{h['name']}"] = Problem(
                         f"{h['name']}{where(h['site'])} has gone quiet",
                         f"{seen} (limit {_ago(h['max_age'])}).", "#")
+        if rules["companions"]:
+            for c in rt.companions.views():
+                if c["status"] == "quiet":
+                    out[f"companion:{c['name']}"] = Problem(
+                        f"host {c['name']} has gone quiet",
+                        f"No report from its companion for {_ago(c['age'])}"
+                        f" (limit {_ago(QUIET_AFTER)}).", "#/hosts")
+                    continue
+                for d in (c["report"] or {}).get("disks", []):
+                    if d["total"] and d["used"] / d["total"] >= DISK_FULL:
+                        out[f"disk:{c['name']}:{d['mount']}"] = Problem(
+                            f"{d['mount']} on {c['name']} is almost full",
+                            f"{d['used'] / d['total']:.0%} used,"
+                            f" {_size(d['total'] - d['used'])} free.", "#/hosts")
         return out
 
     # --- sending ---
@@ -448,6 +472,24 @@ groups:
         annotations:
           summary: "{{{{ $labels.job_name }}}} has not run on schedule"
           description: "No report for longer than its limit. {base}/"
+
+      - alert: ArgusCompanionQuiet
+        expr: time() - argus_companion_last_report_timestamp_seconds > {QUIET_AFTER}
+        for: 1m
+        labels: {{ severity: critical }}
+        annotations:
+          summary: "host {{{{ $labels.companion }}}} has gone quiet"
+          description: >-
+            Its companion has stopped reporting: the host, its network or the
+            companion is down. {base}/#/hosts
+
+      - alert: ArgusDiskFull
+        expr: argus_companion_disk_used_ratio >= {DISK_FULL}
+        for: 5m
+        labels: {{ severity: critical }}
+        annotations:
+          summary: "{{{{ $labels.mount }}}} on {{{{ $labels.companion }}}} is almost full"
+          description: "{{{{ $value | humanizePercentage }}}} used. {base}/#/hosts"
 
       - alert: ArgusConfigRejected
         expr: argus_config_last_reload_success == 0

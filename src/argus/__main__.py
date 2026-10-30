@@ -22,13 +22,14 @@ def serve() -> None:
     os.umask(0o077)
     log = logging.getLogger("argus")
     cert = tls.files(DB.parent)
+    pin = cert and tls.spki_pin(cert[0])
     if cert:
-        log.info("HTTPS on port %d; certificate fingerprint (SHA-256) %s",
-                 PORT, tls.fingerprint(cert[0]))
+        log.info("HTTPS on port %d; certificate fingerprint (SHA-256) %s; key pin %s",
+                 PORT, tls.fingerprint(cert[0]), pin)
     else:
         log.info("plain HTTP on port %d (ARGUS_TLS=off)", PORT)
     uvicorn.run(
-        create_app(),
+        create_app(tls_pin=pin or None),
         host="0.0.0.0",  # noqa: S104 (a container's port, published by its owner)
         port=PORT,
         access_log=False,

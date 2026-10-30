@@ -1,7 +1,7 @@
 """HTTPS by default (design decision 2), with nothing to set up.
 
 On first start Argus makes a self-signed certificate in its data volume and
-logs its SHA-256 fingerprint. Companions pin that fingerprint when they enroll,
+logs its SHA-256 fingerprint. Companions pin its public key when they enroll,
 so a self-signed certificate is safe for them; browsers show a warning once.
 
 ARGUS_TLS=off serves plain HTTP (behind a proxy that does HTTPS), and
@@ -10,7 +10,9 @@ ARGUS_TLS_CERT plus ARGUS_TLS_KEY use your own certificate instead.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import hashlib
 import ipaddress
 import os
 import socket
@@ -27,6 +29,15 @@ YEARS = 10
 def fingerprint(cert_path: Path) -> str:
     cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
     return cert.fingerprint(hashes.SHA256()).hex(":").upper()
+
+
+def spki_pin(cert_path: Path) -> str:
+    """SHA-256 of the certificate's public key, base64: what companions and
+    curl's --pinnedpubkey check. It survives renewing a certificate with the same key."""
+    cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    der = cert.public_key().public_bytes(serialization.Encoding.DER,
+                                         serialization.PublicFormat.SubjectPublicKeyInfo)
+    return base64.b64encode(hashlib.sha256(der).digest()).decode()
 
 
 def ensure_self_signed(directory: Path) -> tuple[Path, Path]:

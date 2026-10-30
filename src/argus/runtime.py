@@ -16,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from argus import config as cfg
+from argus.companions import Companions
 from argus.probes import Prober, Result
 from argus.state import Store
 
@@ -37,6 +38,7 @@ class Runtime:
         self.db_path = Path(db_path)
         self.clock = clock
         self.store = Store(db_path)
+        self.companions = Companions(self.store.db, clock)
         self.prober = prober or Prober()
         self.config, self.config_hash, self.config_mtime = cfg.Config(), "none", None
         self.reload_ok = True
@@ -95,6 +97,8 @@ class Runtime:
         self.maybe_reload()
         started = []
         for check in self.config.checks:
+            if check.companion:
+                continue  # its companion runs it and reports the results
             if check.name not in self.next_due:
                 # Spread first runs over 10 s so a restart is not one burst.
                 self.next_due[check.name] = now + zlib.crc32(check.name.encode()) % 10
@@ -144,6 +148,20 @@ class Runtime:
             out.append({**j.model_dump(), "status": status, "last": run,
                         "last_success": run and run["last_success"]})
         return out
+
+    def companion_checks(self, companion: str) -> list[cfg.Check]:
+        return [c for c in self.config.checks if c.companion == companion]
+
+    def record_remote(self, companion: str, name: str, result: Result) -> bool:
+        """A result a companion reports; only for checks assigned to it."""
+        if not any(c.name == name for c in self.companion_checks(companion)):
+            return False
+        before = self.store.get(name).status
+        state = self.store.record(name, result, self.clock())
+        if state.status != before:
+            log.info("%s (from %s): %s -> %s %s", name, companion, before, state.status,
+                     result.error)
+        return True
 
     def beat(self, name: str, source: str, version: str | None = None) -> bool:
         if name not in {h.name for h in self.config.heartbeats}:

@@ -4,6 +4,8 @@
   /healthz, and the two writes timers make (heartbeats and job reports).
 - Behind the admin login: settings, and the actions on the Alerts page. Every
   such write needs the session's CSRF token in X-CSRF-Token.
+- Companions (under /companion/, outside /api/): enrollment with a single-use
+  code, then reports with the companion's own token. Replies are signed.
 
 Handlers are async on purpose: they then run on the event loop thread, the same
 one the scheduler writes from, so SQLite needs no locking.
@@ -17,12 +19,14 @@ import hmac
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -38,7 +42,9 @@ from argus.alerts import (
     recent_chats,
 )
 from argus.auth import COOKIE, SESSION_DAYS, Auth, AuthError, Session
+from argus.companions import REPORT_EVERY, EnrollError, Signer
 from argus.metrics import registry
+from argus.probes import Result
 from argus.runtime import Runtime
 from argus.settings import Settings, load_key
 
@@ -48,6 +54,10 @@ LOG_TAIL = 64 * 1024  # characters of log kept per run
 # The read-only GitHub token (decision 0010). Absent: no Updates view, no tracks.
 TOKEN_FILE = Path(os.environ.get("ARGUS_GITHUB_TOKEN_FILE", "/run/secrets/github_token"))
 UI_DIR = Path(os.environ.get("ARGUS_UI", Path(__file__).resolve().parents[2] / "ui" / "dist"))
+# The companion builds (linux-amd64, linux-arm64), put there by the image build.
+COMPANION_DIR = Path(os.environ.get("ARGUS_COMPANION_DIR", "/app/companion"))
+INSTALL_SH = Path(__file__).with_name("companion-install.sh")
+MAX_COMPANION_REPORT = 512 * 1024  # bytes
 
 # The UI is same-origin only: no CDNs, no external fonts, no inline scripts.
 SECURITY_HEADERS = {
@@ -119,7 +129,7 @@ class AlertSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     telegram_token: str | None = Field(None, max_length=200, pattern=r"^$|^\d{3,20}:[\w-]{20,100}$")
     chat_id: str | None = Field(None, pattern=r"^$|^-?\d{1,20}$|^@[A-Za-z0-9_]{5,32}$")
-    rules: dict[Literal["checks", "jobs", "heartbeats"], bool] | None = None
+    rules: dict[Literal["checks", "jobs", "heartbeats", "companions"], bool] | None = None
     repeat_minutes: int | None = Field(None, ge=0, le=7 * 24 * 60)
     link: str | None = Field(None, max_length=300)
     watch_url: str | None = Field(None, max_length=500)
@@ -135,6 +145,73 @@ class Switch(BaseModel):
 class Access(BaseModel):
     model_config = ConfigDict(extra="forbid")
     view_requires_login: bool
+
+
+class NewHost(BaseModel):
+    """"Add a host": the address the host reaches Argus at, and options."""
+
+    model_config = ConfigDict(extra="forbid")
+    url: str = Field(max_length=300)
+    name: str = Field("", pattern=r"^$|^[a-z0-9][a-z0-9-]{0,62}$")
+    read_only: bool = False
+
+    _url = field_validator("url")(_http_url)
+
+
+class Enroll(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(max_length=40)
+    hostname: str = Field(max_length=253)
+
+
+# What a companion reports. Unknown fields are ignored, so an older Argus still
+# takes reports from a newer companion.
+class Container(BaseModel):
+    name: str = Field(max_length=200)
+    image: str = Field("", max_length=300)
+    state: str = Field("", max_length=40)  # running, exited, restarting, ...
+    health: str = Field("", max_length=40)  # healthy, unhealthy, starting, or none
+    status: str = Field("", max_length=200)  # Docker's words: "Up 3 hours (healthy)"
+    project: str = Field("", max_length=200)  # the compose project, if any
+
+
+class Disk(BaseModel):
+    mount: str = Field(max_length=300)
+    total: int = Field(ge=0)
+    used: int = Field(ge=0)
+
+
+class Updates(BaseModel):
+    pending: int | None = Field(None, ge=0)
+    security: int | None = Field(None, ge=0)
+    manager: str = Field("", max_length=20)
+    checked_at: float | None = None
+    error: str = Field("", max_length=300)
+
+
+class RemoteResult(BaseModel):
+    name: str = Field(max_length=64)
+    ok: bool
+    duration: float = Field(ge=0)
+    error: str = Field("", max_length=300)
+
+
+class Report(BaseModel):
+    nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{16,64}$")
+    version: str = Field("", max_length=100)
+    hostname: str = Field("", max_length=253)
+    os: str = Field("", max_length=120)
+    kernel: str = Field("", max_length=120)
+    arch: str = Field("", max_length=20)
+    uptime: float | None = None
+    read_only: bool = False
+    containers: list[Container] | None = Field(None, max_length=1000)
+    docker_error: str = Field("", max_length=300)
+    failed_units: list[str] | None = Field(None, max_length=200)
+    disks: list[Disk] = Field([], max_length=100)
+    updates: Updates | None = None
+    reboot_required: bool | None = None
+    checks: list[RemoteResult] = Field([], max_length=1000)
 
 
 def session_of(request: Request) -> Session | None:
@@ -167,7 +244,8 @@ def _poller() -> github.Poller | None:
 
 def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                poller: github.Poller | None = None,
-               alert_client: httpx.AsyncClient | None = None) -> FastAPI:
+               alert_client: httpx.AsyncClient | None = None,
+               tls_pin: str | None = None) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         rt = runtime or Runtime(
@@ -183,6 +261,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         auth.setup_code()  # logs it when there is no password yet
         app.state.rt, app.state.gh = rt, gh
         app.state.settings, app.state.auth, app.state.alerter = settings, auth, alerter
+        app.state.signer, app.state.tls_pin = Signer(settings), tls_pin
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
         tasks = []
         if start_scheduler:
@@ -355,6 +434,92 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
     async def alertmanager_file() -> Response:
         return Response(ALERTMANAGER_EXAMPLE, media_type="application/yaml", headers={
             "Content-Disposition": 'attachment; filename="alertmanager-example.yml"'})
+
+    # --- companions: the UI's side ---
+
+    @app.get("/api/companions")
+    async def companions(request: Request) -> dict:
+        r = rt(request)
+        views = r.companions.views()
+        for v in views:
+            v["checks"] = [check_view(r, c) for c in r.companion_checks(v["name"])]
+        named = {c.companion for c in r.config.checks if c.companion}
+        return {"companions": views, "report_every": REPORT_EVERY, "now": r.clock(),
+                "tls_pin": request.app.state.tls_pin is not None,
+                "unknown": sorted(named - r.companions.names())}
+
+    @app.post("/api/companions/codes")
+    async def add_host(body: NewHost, request: Request, _: Admin) -> dict:
+        code, expires = rt(request).companions.new_code(body.name, body.read_only)
+        url = body.url.rstrip("/")
+        pin = request.app.state.tls_pin if url.startswith("https://") else None
+        q = shlex.quote
+        fetch = f"curl -fsS -k --pinnedpubkey {q('sha256//' + pin)}" if pin else "curl -fsS"
+        args = f"--url {q(url)}" + (f" --pin {q(pin)}" if pin else "") + f" --code {code}"
+        if body.read_only:
+            args += " --read-only"
+        return {"code": code, "expires": expires,
+                "command": f"{fetch} {q(url + '/companion/install.sh')} | sudo sh -s -- {args}"}
+
+    @app.delete("/api/companions/{cid}")
+    async def remove_host(cid: str, request: Request, _: Admin) -> dict:
+        if not rt(request).companions.remove(cid):
+            raise HTTPException(404, "no such host")
+        return {"ok": True}
+
+    # --- companions: the hosts' side ---
+
+    @app.get("/companion/install.sh")
+    async def install_sh() -> Response:
+        return Response(INSTALL_SH.read_text(), media_type="text/x-shellscript")
+
+    @app.get("/companion/download/{build}")
+    async def download(build: Literal["linux-amd64", "linux-arm64"]) -> Response:
+        path = COMPANION_DIR / f"argus-companion-{build}"
+        if not path.is_file():
+            raise HTTPException(404, "this Argus has no companion build for " + build)
+        return FileResponse(path, media_type="application/octet-stream",
+                            filename=f"argus-companion-{build}")
+
+    @app.post("/companion/enroll")
+    async def enroll(body: Enroll, request: Request) -> dict:
+        try:
+            cid, name, token = rt(request).companions.enroll(body.code, body.hostname,
+                                                             address(request))
+        except EnrollError as e:
+            raise HTTPException(403, str(e)) from None
+        return {"id": cid, "name": name, "token": token,
+                "public_key": request.app.state.signer.public, "report_every": REPORT_EVERY}
+
+    @app.post("/companion/report")
+    async def companion_report(request: Request) -> Response:
+        r = rt(request)
+        auth = request.headers.get("authorization", "")
+        row = r.companions.by_token(auth.removeprefix("Bearer ").strip())
+        if row is None:
+            raise HTTPException(401, "unknown companion token; enroll this host again")
+        body = await request.body()
+        if len(body) > MAX_COMPANION_REPORT:
+            raise HTTPException(413, "report too large")
+        try:
+            rep = Report.model_validate_json(body)
+        except ValidationError as e:
+            raise HTTPException(422, e.errors(include_url=False, include_context=False)) from None
+        for c in rep.checks:
+            r.record_remote(row["name"], c.name, Result(c.ok, c.duration, c.error))
+        r.companions.save_report(row["id"], rep.model_dump(exclude={"nonce", "checks"}),
+                                 address(request))
+        reply = json.dumps({
+            "name": row["name"],
+            "report_every": REPORT_EVERY,
+            "read_only": bool(row["read_only"]),
+            "checks": [c.model_dump(include={"name", "kind", "target", "interval", "timeout",
+                                             "expect_status", "verify_tls"})
+                       for c in r.companion_checks(row["name"])],
+        }, separators=(",", ":")).encode()
+        sig = request.app.state.signer.sign(row["id"], rep.nonce, reply)
+        return Response(reply, media_type="application/json",
+                        headers={"X-Argus-Signature": sig})
 
     @app.get("/healthz")
     async def healthz(request: Request) -> Response:

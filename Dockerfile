@@ -6,6 +6,18 @@ RUN npm ci --no-audit --no-fund
 COPY ui/ ./
 RUN npm test && npm run build
 
+# The companion: tested here, built for both architectures, served by Argus to
+# the hosts it enrolls. Static binaries, standard library only.
+FROM golang:1.27.3-alpine AS companion
+WORKDIR /src
+COPY companion/ ./
+ARG COMMIT=unknown
+RUN test -z "$(gofmt -l .)" && go vet ./... && CGO_ENABLED=0 go test ./... \
+ && for arch in amd64 arm64; do \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+        -ldflags "-s -w -X main.version=2.0.0-dev+$(echo $COMMIT | cut -c1-12)" -o /out/argus-companion-linux-$arch . ; \
+    done
+
 FROM python:3.14.7-slim-trixie
 
 # iputils-ping for ping checks. The container needs CAP_NET_RAW for it (compose adds it).
@@ -26,6 +38,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
  && python -c "import fastapi, uvicorn, httpx, yaml, prometheus_client, cryptography, argon2"
 COPY src/ src/
 COPY --from=ui /ui/dist ui/dist/
+COPY --from=companion /out/ companion/
 
 ARG COMMIT=unknown
 ENV ARGUS_COMMIT=$COMMIT ARGUS_VERSION=2.0.0-dev PYTHONPATH=/app/src PYTHONUNBUFFERED=1 \
