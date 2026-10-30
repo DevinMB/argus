@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useArgus } from "./api.js";
+import { useArgus, useSession } from "./api.js";
+import Account from "./components/Account.jsx";
+import AlertsPage from "./components/AlertsPage.jsx";
+import SignIn from "./components/SignIn.jsx";
 import CheckDrawer from "./components/CheckDrawer.jsx";
 import CheckGrid from "./components/CheckGrid.jsx";
 import Asides from "./components/Asides.jsx";
@@ -13,12 +16,14 @@ import { acrossSites, ago, agoText, byStatus, filterChecks, groupChecks, headlin
 const STATUS_FILTERS = [["all", "All"], ["problems", "Problems"], ["up", "Up"]];
 
 // The view and the selected check live in the hash (#/updates, #/updates/<repo>,
-// #/check/<name>) so a link can open any of them. A check's drawer opens over
-// the Checks view.
+// #/alerts, #/account, #/check/<name>) so a link can open any of them. A
+// check's drawer opens over the Checks view.
 function useView() {
   const read = () => {
     const m = window.location.hash.match(/^#\/updates(?:\/(.+))?$/);
-    return m ? ["updates", m[1] && decodeURIComponent(m[1])] : ["checks", null];
+    if (m) return ["updates", m[1] && decodeURIComponent(m[1])];
+    const page = window.location.hash.match(/^#\/(alerts|account)$/);
+    return page ? [page[1], null] : ["checks", null];
   };
   const [view, setView] = useState(read);
   useEffect(() => {
@@ -65,6 +70,7 @@ function linkGroups(links = []) {
 
 export default function App() {
   const { data, error, fetchedAt } = useArgus();
+  const [session, setSession] = useSession();
   const [selected, select] = useSelected();
   const [view, focus] = useView();
   const [status, setStatus] = useState("all");
@@ -93,6 +99,9 @@ export default function App() {
   const critical = checks.filter((c) => c.severity === "critical");
   const stalled = data && now - data.info.last_tick > 30;
   const needYou = (data?.updates?.repos ?? []).filter((r) => lifecycle(r).you).length;
+  const alertsUnset = data?.info.alerts && !data.info.alerts.ready;
+  const locked = session?.view_requires_login && !session.signed_in;
+  const settingsView = view === "alerts" || view === "account";
 
   return (
     <div className="page">
@@ -106,6 +115,9 @@ export default function App() {
           <a href="#/updates" aria-current={view === "updates" ? "page" : undefined}>
             Updates{needYou > 0 && <span className="tab-badge">{needYou}</span>}
           </a>
+          <a href="#/alerts" aria-current={view === "alerts" ? "page" : undefined}>
+            Alerts{alertsUnset && <span className="tab-badge" title="Nothing sends alerts yet">!</span>}
+          </a>
         </nav>
         <div className="top-meta">
           <span className={`live ${error || stalled ? "live-off" : ""}`}>
@@ -114,6 +126,9 @@ export default function App() {
           {fetchedAt && <span className="hide-sm">updated {agoText((Date.now() - fetchedAt) / 1000)}</span>}
           {data && <span className="hide-sm">config {data.info.config}</span>}
           {data && <span className="hide-sm">build {data.info.commit.slice(0, 7)}</span>}
+          {session && (session.signed_in
+            ? <a className="top-link" href="#/account" aria-current={view === "account" ? "page" : undefined}>Account</a>
+            : <a className="top-link" href="#/account">{session.setup_needed ? "Set up" : "Sign in"}</a>)}
         </div>
       </header>
 
@@ -124,12 +139,21 @@ export default function App() {
         </p>
       )}
 
-      {!data && !error && <p className="muted pad">Loading…</p>}
-      {!data && error && <p className="banner banner-error">Cannot reach the Argus API: {error}</p>}
+      {(locked || (settingsView && session && !session.signed_in)) && (
+        <SignIn session={session} onSession={setSession}
+                why={locked ? "This Argus asks for the admin password to view anything." : undefined} />
+      )}
+      {!locked && settingsView && session?.signed_in && view === "alerts" && <AlertsPage session={session} />}
+      {!locked && settingsView && session?.signed_in && view === "account" && (
+        <Account session={session} onSession={setSession} />
+      )}
 
-      {data && view === "updates" && <Updates updates={data.updates} now={now} focus={focus} />}
+      {!locked && !settingsView && !data && !error && <p className="muted pad">Loading…</p>}
+      {!locked && !settingsView && !data && error && <p className="banner banner-error">Cannot reach the Argus API: {error}</p>}
 
-      {data && view === "checks" && (
+      {!locked && data && view === "updates" && <Updates updates={data.updates} now={now} focus={focus} />}
+
+      {!locked && data && view === "checks" && (
         <>
           <section className="hero">
             <div className="eye">
@@ -145,12 +169,20 @@ export default function App() {
             </div>
             <div className="hero-side">
               <h1>{headline(sum)}</h1>
-              <p className="lede">
-                {checks.length} checks every minute{acrossSites(siteOrder.length)}, covering{" "}
-                {joinList(groupChecks(checks).map(([g]) => data.info.groups?.[g] ?? g))}. Three
-                failures in a row and a check is down; the critical ones page you.
-              </p>
-              <Asides checks={checks} heartbeats={data.heartbeats} />
+              {checks.length ? (
+                <p className="lede">
+                  {checks.length} checks every minute{acrossSites(siteOrder.length)}, covering{" "}
+                  {joinList(groupChecks(checks).map(([g]) => data.info.groups?.[g] ?? g))}. Three
+                  failures in a row and a check is down; the critical ones page you.
+                </p>
+              ) : (
+                <p className="lede">
+                  Nothing to check yet. Add checks to <code>argus.yml</code> in the config folder;
+                  Argus picks up changes within a second. Meanwhile,{" "}
+                  <a href="#/alerts">set up alerts</a> so Argus can reach you.
+                </p>
+              )}
+              <Asides checks={checks} heartbeats={data.heartbeats} alerts={data.info.alerts} />
               <div className="meters">
                 {manySites && siteOrder.map((s) => {
                   const ss = siteSum(s);
@@ -221,7 +253,7 @@ export default function App() {
             {links.map((l) => <a key={l.url} href={l.url}>{l.label}</a>)}
           </div>
         ))}
-        <div className="foot-note">Read-only. No login. Checks are configured in homelab-ops.</div>
+        <div className="foot-note">Checks live in argus.yml; alerts and access are set here, behind the admin password.</div>
       </footer>
 
       {selected && <CheckDrawer name={selected} now={now} sites={sites} onClose={() => select(null)} />}

@@ -1,14 +1,17 @@
 """Prometheus /metrics, built from the store at scrape time so it can never
 disagree with what the API shows.
 
-Alerting lives in dmb-monitoring. argus_scheduler_last_tick_timestamp_seconds is
-there so a hung loop is distinguishable from a quiet week: every other series
-here would keep reporting the last state forever.
+Alerting is Argus's own (alerts.py) or, when the Alerts page says so,
+Prometheus rules over these series (alerts.prometheus_rules).
+argus_scheduler_last_tick_timestamp_seconds is there so a hung loop is
+distinguishable from a quiet week: every other series here would keep
+reporting the last state forever.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 
 from prometheus_client.core import CollectorRegistry, GaugeMetricFamily, InfoMetricFamily
 
@@ -23,9 +26,11 @@ JOB_LABELS = ["job_name", "group", "site", "severity"]
 
 
 class Collector:
-    def __init__(self, runtime: Runtime, poller: Poller | None = None) -> None:
+    def __init__(self, runtime: Runtime, poller: Poller | None = None,
+                 alert_test: Callable[[], bool] | None = None) -> None:
         self.rt = runtime
         self.gh = poller
+        self.alert_test = alert_test
 
     def collect(self):
         rt = self.rt
@@ -116,6 +121,13 @@ class Collector:
         yield GaugeMetricFamily(
             "argus_config_checks", "Checks in the running config.", value=len(rt.config.checks)
         )
+        if self.alert_test is not None:
+            yield GaugeMetricFamily(
+                "argus_alert_test",
+                "1 for 15 minutes after a Prometheus test is started on the Alerts page "
+                "(the ArgusTestAlert rule fires on it), else 0.",
+                value=1 if self.alert_test() else 0,
+            )
         if self.gh is not None:
             yield from self.github()
         info = InfoMetricFamily("argus_build", "Running build and config.")
@@ -175,7 +187,8 @@ class Collector:
 SEVERITIES = ("critical", "high", "medium", "low")
 
 
-def registry(runtime: Runtime, poller: Poller | None = None) -> CollectorRegistry:
+def registry(runtime: Runtime, poller: Poller | None = None,
+             alert_test: Callable[[], bool] | None = None) -> CollectorRegistry:
     reg = CollectorRegistry(auto_describe=False)
-    reg.register(Collector(runtime, poller))
+    reg.register(Collector(runtime, poller, alert_test))
     return reg

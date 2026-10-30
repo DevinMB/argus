@@ -34,13 +34,16 @@ class Runtime:
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.config_path = config_path
+        self.db_path = Path(db_path)
         self.clock = clock
         self.store = Store(db_path)
         self.prober = prober or Prober()
-        self.config, self.config_hash = cfg.load(config_path)
-        self.config_mtime = config_path.stat().st_mtime
+        self.config, self.config_hash, self.config_mtime = cfg.Config(), "none", None
         self.reload_ok = True
-        self.last_reload = clock()
+        self.started = self.last_reload = clock()
+        if config_path.exists():
+            self.config, self.config_hash = cfg.load(config_path)
+            self.config_mtime = config_path.stat().st_mtime
         self.last_tick = 0.0
         self.next_due: dict[str, float] = {}
         self._sem = asyncio.Semaphore(MAX_CONCURRENT)
@@ -54,6 +57,10 @@ class Runtime:
     def maybe_reload(self) -> None:
         try:
             mtime = self.config_path.stat().st_mtime
+        except FileNotFoundError:
+            # No argus.yml is a valid setup (everything from the UI); one that
+            # was there and went away keeps the running config.
+            return
         except OSError as e:
             if self.reload_ok:
                 log.error("config unreadable, keeping the running one: %s", e)
@@ -108,6 +115,35 @@ class Runtime:
             except Exception:
                 log.exception("tick failed")
             await asyncio.sleep(TICK)
+
+    def heartbeat_views(self) -> list[dict]:
+        """Each configured heartbeat with its state: ok, late or never."""
+        beats, now = self.store.heartbeats(), self.clock()
+        out = []
+        for h in self.config.heartbeats:
+            b = beats.get(h.name)
+            age = now - b["last_seen"] if b else None
+            status = "never" if b is None else ("late" if age > h.max_age else "ok")
+            out.append({**h.model_dump(), "status": status, "age": age,
+                        "last_seen": b and b["last_seen"], "source": b and b["source"],
+                        "version": b and b["version"], "version_at": b and b["version_at"]})
+        return out
+
+    def job_views(self) -> list[dict]:
+        """Each configured job with its newest run and state: ok, failed, late or never."""
+        last, now = self.store.last_runs(), self.clock()
+        out = []
+        for j in self.config.jobs:
+            run = last.get(j.name)
+            if run is None:
+                status = "never"
+            elif run["result"] == "failed":
+                status = "failed"
+            else:
+                status = "late" if now - run["finished"] > j.max_age else "ok"
+            out.append({**j.model_dump(), "status": status, "last": run,
+                        "last_success": run and run["last_success"]})
+        return out
 
     def beat(self, name: str, source: str, version: str | None = None) -> bool:
         if name not in {h.name for h in self.config.heartbeats}:
