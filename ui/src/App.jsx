@@ -193,7 +193,8 @@ export default function App() {
       {!locked && !settingsView && !data && !error && <p className="muted pad">Loading…</p>}
       {!locked && !settingsView && !data && error && <p className="banner banner-error">Cannot reach the Argus API: {error}</p>}
 
-      {!locked && data && view === "hosts" && <Hosts data={data.companions} session={session} reload={reload} start={data.start} />}
+      {!locked && data && view === "hosts" && <Hosts data={data.companions} session={session} reload={reload} start={data.start}
+                 refs={[...data.jobs.map((j) => `job:${j.name}`), ...data.heartbeats.map((h) => `heartbeat:${h.name}`)]} />}
 
       {!locked && data && view === "updates" && <Updates updates={data.updates} now={now} focus={focus} />}
 

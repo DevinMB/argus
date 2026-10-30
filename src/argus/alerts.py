@@ -159,6 +159,7 @@ class Alerter:
         self.db.executescript(SCHEMA)
         self._retry_at = 0.0
         self.deploys = None  # set by the app: failed deploys page under "companions"
+        self.patching = None  # and so do failed or skipped patch runs
 
     # --- settings, as the UI sees them ---
 
@@ -243,6 +244,10 @@ class Alerter:
                     out[f"heartbeat:{h['name']}"] = Problem(
                         f"{h['name']}{where(h['site'])} has gone quiet",
                         f"{seen} (limit {_ago(h['max_age'])}).", "#")
+        if rules["companions"] and self.patching is not None:
+            for key, title, detail in self.patching.problems(
+                    [c["name"] for c in rt.companions.views()]):
+                out[key] = Problem(title, detail, "#/hosts")
         if rules["companions"]:
             for c in rt.companions.views():
                 if c["status"] == "quiet":

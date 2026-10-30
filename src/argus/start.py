@@ -73,7 +73,7 @@ def suggestions(companions: list[dict], checks) -> list[dict]:
 
 
 def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
-         companions: list[dict], hidden: bool) -> dict:
+         companions: list[dict], hidden: bool, patched: int = 0) -> dict:
     sugg = suggestions(companions, rt.config.checks)
     reporting = [h for h in companions if h["status"] == "ok"]
     stacks = [s for v in deploy_views for s in v["stacks"]]
@@ -92,6 +92,11 @@ def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
          "why": "A check notices when a service stops answering, even when its host looks fine.",
          "href": "#", "action": "Add a check",
          "suggest": sum(1 for s in sugg if not s["covered"])},
+        {"key": "patching", "done": patched > 0,
+         "title": "Keep it patched",
+         "why": "Pick a weekly window; Argus patches one host at a time, as far as its "
+                "backups make safe, and tells you how it went.",
+         "href": "#/hosts", "action": "Choose a window"},
         {"key": "github", "done": gh_connected,
          "title": "Connect GitHub",
          "why": "See each app's updates on their way: Dependabot's PRs, CI, merges and builds.",
@@ -109,7 +114,7 @@ def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
         "suggestions": [s for s in sugg if not s["covered"]],
         "coverage": {
             "services": len(services), "watched": sum(s["covered"] for s in services),
-            "hosts": len(companions), "reporting": len(reporting),
+            "hosts": len(companions), "reporting": len(reporting), "patched": patched,
             "stacks": len(stacks), "deployed": len(deployed),
         },
     }

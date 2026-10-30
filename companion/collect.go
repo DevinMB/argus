@@ -38,6 +38,9 @@ type Report struct {
 	RebootRequired *bool          `json:"reboot_required,omitempty"`
 	Checks         []CheckResult  `json:"checks"`
 	Deploys        []DeployResult `json:"deploys"`
+	Local          LocalTime      `json:"local"`
+	Snapshot       string         `json:"snapshot,omitempty"` // "zfs" when / can be snapshotted
+	Patch          *PatchState    `json:"patch,omitempty"`
 }
 
 type Container struct {
@@ -144,6 +147,10 @@ func (c *Collector) Collect(readOnly bool) *Report {
 	}
 	r.Updates = c.updates
 	r.RebootRequired = c.rebootRequired()
+	r.Local = localNow(time.Now())
+	if zfsRoot(c.MountInfo) != "" && has("zfs") {
+		r.Snapshot = "zfs"
+	}
 	return r
 }
 

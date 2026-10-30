@@ -115,6 +115,22 @@ jobs:
           jq '.companions[0].stacks[0] | {status, detail}' hosts.json
           jq -e '.companions[0].stacks[0].detail | contains("privileged")' hosts.json
           curl -s localhost:8099/ | grep -q 'hello from argus'  # the running stack is untouched
+
+          # Patching: "Patch now" runs security updates in a transient unit, outside the
+          # companion's sandbox, and reports how it went. (Sundays allowed for this
+          # one runner, so the build passes on any day.)
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' -X PUT \
+            -d '{"enabled":false,"day":1,"time":"03:00","allow_sunday":true}' \
+            https://localhost:8080/api/patching/runner
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/patching/runner/now
+          for _ in $(seq 120); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].patching.runs[0].result | IN("ok", "failed")' hosts.json >/dev/null && break; sleep 5
+          done
+          jq '.companions[0].patching.runs[0] | {result, level, reboot, summary}' hosts.json
+          jq -e '.companions[0].patching.runs[0] | .result == "ok" and .level == "security" and .reboot == 0' hosts.json \
+            || { jq -r '.companions[0].patching.runs[0].log' hosts.json | tail -60; exit 1; }
+          curl -s localhost:8099/ | grep -q 'hello from argus'  # still serving after patching
           # Removing the host revokes its token: the companion says so in its log.
           id=$(jq -r '.companions[0].id' hosts.json)
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X DELETE https://localhost:8080/api/companions/$id

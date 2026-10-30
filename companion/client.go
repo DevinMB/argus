@@ -179,6 +179,7 @@ type Reply struct {
 	ReadOnly    bool        `json:"read_only"`
 	Checks      []CheckSpec `json:"checks"`
 	Deploy      *DeployPlan `json:"deploy"`
+	Patch       *PatchGrant `json:"patch"`
 }
 
 // Domain separates these signatures from anything else the key might sign.
