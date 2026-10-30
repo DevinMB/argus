@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    # Patch and minor updates arrive as one PR per ecosystem: one build, not one
+    # per package. Majors stay separate and wait for Devin.
+    groups:
+      updates:
+        update-types: [minor, patch]
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    # Patch and minor updates arrive as one PR per ecosystem: one build, not one
+    # per package. Majors stay separate and wait for Devin.
+    groups:
+      updates:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    # Patch and minor updates arrive as one PR per ecosystem: one build, not one
+    # per package. Majors stay separate and wait for Devin.
+    groups:
+      updates:
+        update-types: [minor, patch]
+    ignore:
+      # The shared pipeline tracks main on purpose.
+      - dependency-name: "DevinMB/workflows/*"
+  - package-ecosystem: npm
+    directory: /ui
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 14 }
+    # Patch and minor updates arrive as one PR per ecosystem: one build, not one
+    # per package. Majors stay separate and wait for Devin.
+    groups:
+      updates:
+        update-types: [minor, patch]

@@ -1,0 +1,67 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:   # the Dependabot gate starts the main build this way
+# Actions are pinned to commit SHAs: tags can be moved or deleted (trivy-action's were).
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with: { python-version: "3.14" }
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -q
+
+  image:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write   # push to GHCR on main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -t argus:ci --build-arg COMMIT=${{ github.sha }} .
+      - name: Trivy (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: argus:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Smoke test
+        run: |
+          mkdir -p cfg && printf 'checks:\n  - {name: self, kind: tcp, target: "127.0.0.1:8080", site: B, interval: 10}\n' > cfg/argus.yml
+          docker run -d --name argus -p 8080:8080 -v "$PWD/cfg:/config:ro" -e ARGUS_DB=/tmp/argus.db argus:ci
+          for _ in $(seq 30); do curl -sf localhost:8080/healthz && break; sleep 1; done
+          sleep 12
+          curl -sf localhost:8080/metrics | grep 'argus_check_up{check="self"' | grep ' 1.0$'
+          curl -sf localhost:8080/ | grep -q '<title>Argus</title>'
+          curl -sfI localhost:8080/ | grep -qi "content-security-policy: default-src 'self'"
+          docker logs argus
+      # main only: what passed above is what ops-runtime runs (stack-bump picks
+      # up sha-<7> from this workflow's green runs).
+      - name: Push to GHCR
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/devinmb/argus
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in "sha-${GITHUB_SHA::7}" main; do docker tag argus:ci "$IMAGE:$t"; docker push -q "$IMAGE:$t"; done
+          echo "### Pushed $IMAGE:sha-${GITHUB_SHA::7}" >> "$GITHUB_STEP_SUMMARY"
+
+  gate:
+    needs: [test, image]
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    # Shared: patch/minor Dependabot PRs merge on green, majors wait for Devin.
+    uses: DevinMB/workflows/.github/workflows/dependabot-gate.yml@main
