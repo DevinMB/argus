@@ -3,6 +3,8 @@ import { useArgus, useSession } from "./api.js";
 import Account from "./components/Account.jsx";
 import AlertsPage from "./components/AlertsPage.jsx";
 import GitHubPage from "./components/GitHubPage.jsx";
+import ConfigPage, { CheckForm, savedText } from "./components/ConfigPage.jsx";
+import { send } from "./api.js";
 import SignIn from "./components/SignIn.jsx";
 import CheckDrawer from "./components/CheckDrawer.jsx";
 import CheckGrid from "./components/CheckGrid.jsx";
@@ -18,14 +20,14 @@ import { acrossSites, ago, agoText, byStatus, filterChecks, groupChecks, headlin
 const STATUS_FILTERS = [["all", "All"], ["problems", "Problems"], ["up", "Up"]];
 
 // The view and the selected check live in the hash (#/updates, #/updates/<repo>,
-// #/hosts, #/alerts, #/account, #/github, #/check/<name>) so a link can open any of them. A
+// #/hosts, #/alerts, #/account, #/github, #/config, #/check/<name>) so a link can open any of them. A
 // check's drawer opens over the Checks view.
 function useView() {
   const read = () => {
     const m = window.location.hash.match(/^#\/updates(?:\/(.+))?$/);
     if (m) return ["updates", m[1] && decodeURIComponent(m[1])];
     // #/github may carry GitHub's ?installation_id=... after an install.
-    const page = window.location.hash.match(/^#\/(hosts|alerts|account|github)(?:\?.*)?$/);
+    const page = window.location.hash.match(/^#\/(hosts|alerts|account|github|config)(?:\?.*)?$/);
     return page ? [page[1], null] : ["checks", null];
   };
   const [view, setView] = useState(read);
@@ -105,7 +107,31 @@ export default function App() {
   const alertsUnset = data?.info.alerts && !data.info.alerts.ready;
   const quietHosts = (data?.companions?.companions ?? []).filter((h) => h.status === "quiet").length;
   const locked = session?.view_requires_login && !session.signed_in;
-  const settingsView = view === "alerts" || view === "account" || view === "github";
+  const settingsView = ["alerts", "account", "github", "config"].includes(view);
+  // Editing checks: the form, and whether this config can be edited here at all.
+  const [editing, setEditing] = useState(null); // null, "new" or a check
+  const [editable, setEditable] = useState(false);
+  const [saved, setSaved] = useState(null);
+  useEffect(() => {
+    if (!session?.signed_in) return setEditable(false);
+    send("GET", "/api/config").then((c) => setEditable(c.editable), () => setEditable(false));
+  }, [session?.signed_in, view]);
+  const afterSave = (out) => {
+    setEditing(null);
+    setSaved(savedText(out));
+    reload();
+  };
+  const removeCheck = async (check) => {
+    try {
+      const c = await send("GET", "/api/config");
+      const out = await send("DELETE", `/api/config/entries/checks/${encodeURIComponent(check.name)}?base=${c.base}`,
+        undefined, session.csrf);
+      select(null);
+      afterSave(out);
+    } catch (e) {
+      setSaved(`Not removed: ${e.message}`);
+    }
+  };
 
   return (
     <div className="page">
@@ -152,6 +178,7 @@ export default function App() {
       )}
       {!locked && settingsView && session?.signed_in && view === "alerts" && <AlertsPage session={session} />}
       {!locked && settingsView && session?.signed_in && view === "github" && <GitHubPage session={session} />}
+      {!locked && settingsView && session?.signed_in && view === "config" && <ConfigPage session={session} />}
       {!locked && settingsView && session?.signed_in && view === "account" && (
         <Account session={session} onSession={setSession} />
       )}
@@ -187,9 +214,10 @@ export default function App() {
                 </p>
               ) : (
                 <p className="lede">
-                  Nothing to check yet. Add checks to <code>argus.yml</code> in the config folder;
-                  Argus picks up changes within a second. Meanwhile,{" "}
-                  <a href="#/alerts">set up alerts</a> so Argus can reach you.
+                  Nothing to check yet. {editable
+                    ? <>Press <strong>Add a check</strong> below for anything with a URL, a port or an address.</>
+                    : <>Sign in and press <strong>Add a check</strong>, or edit <code>argus.yml</code>.</>}{" "}
+                  Meanwhile, <a href="#/alerts">set up alerts</a> so Argus can reach you.
                 </p>
               )}
               <Asides checks={checks} heartbeats={data.heartbeats} alerts={data.info.alerts} />
@@ -234,11 +262,20 @@ export default function App() {
             <Jobs jobs={data.jobs} now={now} sites={sites} />
           </section>
 
+          {saved && <p className="form-ok" role="status">{saved}</p>}
+          {editing && (
+            <CheckForm session={session} check={editing === "new" ? null : editing} sites={sites}
+                       groups={groupChecks(checks).map(([g]) => g)}
+                       hosts={(data.companions?.companions ?? []).map((h) => h.name)}
+                       onDone={afterSave} onCancel={() => setEditing(null)} />
+          )}
+
           <section className="toolbar">
             <Segmented label="Status" value={status} options={STATUS_FILTERS} onChange={setStatus} />
             {manySites && <Segmented label="Site" value={site} options={siteFilters} onChange={setSite} />}
             <input className="search" type="search" placeholder="Filter by name, target or tag"
                    value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter checks" />
+            {editable && !editing && <button className="btn" onClick={() => { setSaved(null); setEditing("new"); }}>Add a check</button>}
           </section>
 
           <CheckGrid checks={shown} now={now} sites={sites} groups={data.info.groups} onPick={select} />
@@ -266,7 +303,9 @@ export default function App() {
         <div className="foot-note">Checks live in argus.yml; alerts and access are set here, behind the admin password.</div>
       </footer>
 
-      {selected && <CheckDrawer name={selected} now={now} sites={sites} onClose={() => select(null)} />}
+      {selected && <CheckDrawer name={selected} now={now} sites={sites} onClose={() => select(null)}
+                                onEdit={editable ? (c) => { select(null); setSaved(null); setEditing(c); } : undefined}
+                                onRemove={removeCheck} />}
     </div>
   );
 }

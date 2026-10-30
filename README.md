@@ -17,6 +17,16 @@ Open https://localhost:8080 (the certificate is Argus's own, so the browser warn
 - `ARGUS_TLS=off` serves plain HTTP (behind a proxy); `ARGUS_TLS_CERT` and `ARGUS_TLS_KEY` use your own certificate.
 - Forgot the password: `docker exec argus python -m argus reset-login`.
 
+## Config
+
+Everything Argus watches is one YAML file, `argus.yml`. Change single checks on the Checks page (**Add a check**, or **Change** in a check's panel), or the whole file on the Config page. Argus checks every change before saving; a mistake is shown and nothing changes. Comments and layout in the file are kept: an edit changes only its own lines.
+
+Where the file lives (Config page):
+
+- **In Argus** (a new install's default), with Export always there.
+- **In a GitHub repo.** A change made in git shows within a minute; an edit made here becomes a commit, or a pull request to review. If the file changed in git since you opened it, the edit is refused and the newer version is shown. Saving needs the write token (GitHub page).
+- **A mounted file** (`ARGUS_CONFIG`), read when it changes; the UI only shows it.
+
 ## Connect GitHub
 
 On **Updates**, press **Connect GitHub**. Argus makes its own GitHub App on your account (or an organization) with GitHub's app-manifest flow: confirm on GitHub, then choose the repos it may see. Updates then shows each repo's pipeline: Dependabot's PRs, CI, the merge, the build and its Trivy scan. Majors are spotted from Dependabot's titles and wait for you.

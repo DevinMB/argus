@@ -242,8 +242,15 @@ def _resolve(host: str) -> set[str]:
         return set()
 
 
+def parse(text: str) -> Config:
+    """Validate a config text (from the file, the database or git)."""
+    data = yaml.safe_load(text) or {}
+    if not isinstance(data, dict):
+        raise ValueError("the config must be a mapping (checks:, heartbeats:, ...)")
+    return Config.model_validate(data)
+
+
 def load(path: Path) -> tuple[Config, str]:
     """Parse and validate. Returns the config and a short hash of the file."""
     text = path.read_text()
-    config = Config.model_validate(yaml.safe_load(text) or {})
-    return config, hashlib.sha256(text.encode()).hexdigest()[:12]
+    return parse(text), hashlib.sha256(text.encode()).hexdigest()[:12]

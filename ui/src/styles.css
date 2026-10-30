@@ -623,3 +623,13 @@ details.panel[open] > summary { margin-bottom: 10px; }
 .secrets .field-row input { min-width: 0; }
 .host-wide { grid-column: 2 / -1; min-width: 0; }
 .secrets-toggle { justify-self: start; margin-left: 0; }
+
+/* config */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 12px; }
+.form-grid .wide { grid-column: 1 / -1; }
+.check-form { margin: 0 0 16px; }
+textarea.yaml {
+  width: 100%; min-height: 12em; font: 12.5px/1.5 var(--mono); color: var(--text); background: var(--raise);
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px; resize: vertical; tab-size: 2;
+}
+.banner, .form-error, .form-ok { overflow-wrap: anywhere; }

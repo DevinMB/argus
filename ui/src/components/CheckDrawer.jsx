@@ -5,7 +5,8 @@ import { ago, agoText, ms, siteName, stamp } from "../lib.js";
 
 // Detail for one check: its settings, last result, and a timeline of every
 // change of state Argus recorded, newest first.
-export default function CheckDrawer({ name, now, sites, onClose }) {
+export default function CheckDrawer({ name, now, sites, onClose, onEdit, onRemove }) {
+  const [confirm, setConfirm] = useState(false);
   const [check, setCheck] = useState(null);
   const [error, setError] = useState(null);
   const closeRef = useRef(null);
@@ -48,6 +49,19 @@ export default function CheckDrawer({ name, now, sites, onClose }) {
               <span className="muted">for {ago(now - check.last_change)}</span>
             </div>
             {check.last_error && <pre className="err">{check.last_error}</pre>}
+            {onEdit && (
+              <div className="actions">
+                <button className="btn" onClick={() => onEdit(check)}>Change</button>
+                {!confirm && <button className="btn" onClick={() => setConfirm(true)}>Remove…</button>}
+                {confirm && (
+                  <>
+                    <span className="small">Stop checking {name}? Its history goes too.</span>
+                    <button className="btn" onClick={() => onRemove(check)}>Remove</button>
+                    <button className="link-button" onClick={() => setConfirm(false)}>Keep</button>
+                  </>
+                )}
+              </div>
+            )}
             <dl className="facts">
               <dt>Target</dt><dd className="mono">{check.target}</dd>
               <dt>Kind</dt><dd>{check.kind}{check.kind === "http" && ` · expects ${check.expect_status.join("/")}${check.verify_tls ? "" : " · TLS not verified"}`}</dd>

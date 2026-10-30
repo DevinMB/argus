@@ -9,6 +9,7 @@ the running config stays and argus_config_last_reload_success drops to 0.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 import zlib
@@ -42,6 +43,8 @@ class Runtime:
         self.prober = prober or Prober()
         self.config, self.config_hash, self.config_mtime = cfg.Config(), "none", None
         self.reload_ok = True
+        self.config_text: str | None = None  # set when the config comes from Argus or git
+        self.watch_file = True  # the mounted file is the source (configsrc decides)
         self.started = self.last_reload = clock()
         if config_path.exists():
             self.config, self.config_hash = cfg.load(config_path)
@@ -56,7 +59,20 @@ class Runtime:
         return ({c.name for c in self.config.checks} | {h.name for h in self.config.heartbeats}
                 | {j.name for j in self.config.jobs})
 
+    def apply_text(self, text: str) -> None:
+        """Take a config from the database or git. Raises when it is invalid; the
+        running config then stays."""
+        new = cfg.parse(text)
+        self.config, self.config_text, self.reload_ok = new, text, True
+        self.config_hash = hashlib.sha256(text.encode()).hexdigest()[:12]
+        self.watch_file, self.last_reload = False, self.clock()
+        self.next_due = {k: v for k, v in self.next_due.items() if k in self.names()}
+        self.store.prune(self.names())
+        log.info("config applied: %s, %d checks", self.config_hash, len(new.checks))
+
     def maybe_reload(self) -> None:
+        if not self.watch_file:
+            return
         try:
             mtime = self.config_path.stat().st_mtime
         except FileNotFoundError:

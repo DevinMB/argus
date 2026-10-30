@@ -35,7 +35,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
  && pip check \
  && pip uninstall -y pip setuptools wheel \
  && rm -rf /root/.cache /usr/local/lib/python3*/ensurepip \
- && python -c "import fastapi, uvicorn, httpx, yaml, prometheus_client, cryptography, argon2"
+ && python -c "import fastapi, uvicorn, httpx, yaml, prometheus_client, cryptography, argon2, ruamel.yaml"
 COPY src/ src/
 COPY --from=ui /ui/dist ui/dist/
 COPY --from=companion /out/ companion/

@@ -20,7 +20,7 @@ function Cell({ c, now, sites, onPick }) {
         {Object.keys(sites ?? {}).length > 1 && <span className="chip">{siteName(sites, c.site)}</span>}
       </div>
       <div className="cell-foot">
-        <span>since {ago(now - c.last_change)}</span>
+        <span>{c.last_change ? `since ${ago(now - c.last_change)}` : "no result yet"}</span>
         <span>{ms(c.last_duration)}</span>
         {c.consecutive_failures > 0 && <span className="warn">{c.consecutive_failures} failed</span>}
       </div>
