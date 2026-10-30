@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { joinList } from "../lib.js";
+import { joinList, pagingSentence, watcherSentence } from "../lib.js";
 
 const KINDS = {
   http: ["HTTP", "asks the page for a response and expects the right status code, usually 200. Redirects count as a failure, so a login page cannot pass for the service."],
@@ -7,7 +7,7 @@ const KINDS = {
   ping: ["Ping", "sends an ICMP echo and waits for the reply. Only for hosts with nothing else to check."],
 };
 
-function HowItChecks({ checks, heartbeats }) {
+function HowItChecks({ checks, heartbeats, alerts }) {
   const kinds = {};
   for (const c of checks) kinds[c.kind] = (kinds[c.kind] ?? 0) + 1;
   const intervals = joinList([...new Set(checks.map((c) => `${c.interval} s`))]);
@@ -30,9 +30,9 @@ function HowItChecks({ checks, heartbeats }) {
         <dt>Down</dt>
         <dd>One failure is a blip (<span className="st-failing">failing</span>). Three in a row and it is <span className="st-down">down</span>. One success and it is up again.</dd>
         <dt>Paging</dt>
-        <dd>{critical} checks are marked <span className="chip chip-critical">pages</span>: if one goes down, Prometheus sends it to Telegram. The rest show here and on the boards only, because something else already pages for them.</dd>
+        <dd>{pagingSentence(alerts, critical)} <a href="#/alerts">Alerts settings</a></dd>
         <dt>Watching Argus</dt>
-        <dd>The other site watches this one. If Argus stops or hangs, you get paged from there.</dd>
+        <dd>{watcherSentence(alerts)}</dd>
         <dt>Heartbeats</dt>
         <dd>
           Timers report in after each run; one that goes quiet past its limit is late.{" "}
@@ -66,10 +66,10 @@ function WhyArgus() {
 }
 
 // Pills under the hero text; one panel open at a time, below the row.
-export default function Asides({ checks, heartbeats }) {
+export default function Asides({ checks, heartbeats, alerts }) {
   const [open, setOpen] = useState(null);
   const panels = [
-    ["how", "How it checks", <HowItChecks checks={checks} heartbeats={heartbeats} />],
+    ["how", "How it checks", <HowItChecks checks={checks} heartbeats={heartbeats} alerts={alerts} />],
     ["why", "Why Argus?", <WhyArgus />],
   ];
   return (

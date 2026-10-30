@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
+import { acrossSites, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -218,5 +218,25 @@ describe("sites", () => {
   it("orders any number of sites, unknown ones last", () => {
     const checks = [c("z", "up", { site: "x" }), c("a", "up", { site: "c" }), c("b", "up", { site: "a" })];
     expect(ringOrder(checks, ["a", "b", "c"]).map((x) => x.site)).toEqual(["a", "c", "x"]);
+  });
+});
+
+describe("alerts text", () => {
+  it("turns validation errors into words", () => {
+    expect(errorText("sign in first")).toBe("sign in first");
+    expect(errorText([{ loc: ["body", "chat_id"], msg: "String should match pattern" }]))
+      .toMatch(/^A chat ID is a number/);
+    expect(errorText([{ loc: ["body", "other"], msg: "Field required" }])).toBe("Field required");
+    expect(errorText(undefined)).toBe("");
+  });
+  it("says who pages, and when nobody does", () => {
+    expect(pagingSentence({ sender: "argus", ready: true }, 3)).toMatch(/Argus sends it to Telegram/);
+    expect(pagingSentence({ sender: "argus", ready: false }, 1)).toMatch(/^1 check is marked pages, but nothing sends/);
+    expect(pagingSentence({ sender: "prometheus", ready: true }, 2)).toMatch(/Prometheus and Alertmanager/);
+  });
+  it("says plainly when nothing watches Argus", () => {
+    expect(watcherSentence({ watched: false, sender: "argus" })).toMatch(/^Nothing watches Argus/);
+    expect(watcherSentence({ watched: true })).toMatch(/outside service/);
+    expect(watcherSentence({ watched: false, sender: "prometheus" })).toMatch(/ArgusDown/);
   });
 });

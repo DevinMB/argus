@@ -36,14 +36,24 @@ jobs:
           exit-code: "1"
       - name: Smoke test
         run: |
-          mkdir -p cfg && printf 'checks:\n  - {name: self, kind: tcp, target: "127.0.0.1:8080", site: B, interval: 10}\n' > cfg/argus.yml
+          mkdir -p cfg && printf 'checks:\n  - {name: self, kind: tcp, target: "127.0.0.1:8080", interval: 10}\n' > cfg/argus.yml
           docker run -d --name argus -p 8080:8080 -v "$PWD/cfg:/config:ro" -e ARGUS_DB=/tmp/argus.db argus:ci
-          for _ in $(seq 30); do curl -sf localhost:8080/healthz && break; sleep 1; done
+          for _ in $(seq 30); do curl -skf https://localhost:8080/healthz && break; sleep 1; done
           sleep 12
-          curl -sf localhost:8080/metrics | grep 'argus_check_up{check="self"' | grep ' 1.0$'
-          curl -sf localhost:8080/ | grep -q '<title>Argus</title>'
-          curl -sfI localhost:8080/ | grep -qi "content-security-policy: default-src 'self'"
-          docker logs argus
+          curl -skf https://localhost:8080/metrics | grep 'argus_check_up{check="self"' | grep ' 1.0$'
+          curl -skf https://localhost:8080/ | grep -q '<title>Argus</title>'
+          curl -skfI https://localhost:8080/ | grep -qi "content-security-policy: default-src 'self'"
+          # Fresh install: a setup code in the log, settings closed without a session.
+          docker logs argus 2>&1 | grep -q 'Setup code: '
+          test "$(curl -sk -o /dev/null -w '%{http_code}' -X PUT https://localhost:8080/api/alerts)" = 401
+          docker exec argus python -m argus healthcheck
+          docker logs argus 2>&1 | grep -v 'Setup code'
+      - name: Starts with no config at all, over plain HTTP when told
+        run: |
+          docker run -d --name bare -p 8081:8080 -e ARGUS_TLS=off -e ARGUS_DB=/tmp/argus.db argus:ci
+          for _ in $(seq 30); do curl -sf localhost:8081/healthz && break; sleep 1; done
+          curl -sf localhost:8081/api/info | grep -q '"sender":"argus"'
+          docker exec bare python -m argus healthcheck
       # No image push yet: v2 publishes to GHCR at launch (milestone M6).
 
   gate:

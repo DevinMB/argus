@@ -138,10 +138,14 @@ def test_healthz_reflects_the_scheduler(client, rt, clock):
     assert client.get("/healthz").status_code == 503
 
 
-def test_no_write_api_beyond_heartbeats_and_job_reports(client):
+def test_every_write_but_the_timers_and_sign_in_needs_the_admin(client):
     paths = {(r.path, m) for r in client.app.routes for m in getattr(r, "methods", ())}
-    writes = {p for p, m in paths if m not in ("GET", "HEAD")}
-    assert writes == {"/heartbeat/{name}", "/job/{name}"}
+    writes = {(p, m) for p, m in paths if m not in ("GET", "HEAD")}
+    open_writes = {("/heartbeat/{name}", "POST"), ("/job/{name}", "POST"),
+                   ("/api/setup", "POST"), ("/api/login", "POST")}
+    assert open_writes <= writes
+    for p, m in writes - open_writes:
+        assert client.request(m, p, json={}).status_code == 401, (m, p)
 
 
 def test_security_headers_on_every_response(client):

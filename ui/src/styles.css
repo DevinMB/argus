@@ -503,3 +503,77 @@ button.crow:hover { background: var(--panel); }
 .log { max-height: 420px; overflow: auto; margin: 0 0 10px; padding: 10px; border-radius: 6px;
   background: var(--sunken, rgba(127,127,127,.08)); font: 11.5px/1.5 var(--mono);
   white-space: pre-wrap; word-break: break-word; }
+
+/* settings pages: sign-in, Alerts, Account */
+.top-link { color: var(--text); text-decoration: none; padding: 5px 12px; border: 1px solid var(--line-strong); border-radius: 999px; }
+.top-link[aria-current="page"] { background: var(--raise); }
+.settings { max-width: 760px; padding: 32px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.settings h1, .signin h1 { font: 400 32px/1.1 var(--sans); letter-spacing: -0.02em; margin: 0; }
+.settings > .eyebrow { margin-top: 10px; }
+.settings .lede { margin: 0; }
+.panel {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel);
+}
+.panel > .eyebrow { margin-bottom: 2px; }
+.panel p { margin: 0; }
+.signin { display: grid; place-items: center; padding: 48px 0; }
+.signin .panel { width: min(440px, 100%); }
+.field { display: grid; gap: 6px; }
+.field > span:first-child { font-size: 13px; font-weight: 600; }
+.field small, .toggle small { color: var(--muted); font-size: 12.5px; }
+.field input, .field select {
+  width: 100%; min-width: 0; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 6px;
+  padding: 8px 10px; color: var(--text); font: 13px var(--mono);
+}
+.field input::placeholder { color: var(--muted); font-family: var(--sans); }
+.field-row { display: flex; gap: 8px; align-items: center; }
+.field-row input { flex: 1; }
+.toggle { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.toggle input { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.toggle > span { display: grid; gap: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  background: var(--raise); border: 1px solid var(--line-strong); border-radius: 999px; padding: 7px 16px;
+  cursor: pointer; font-size: 13px; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { border-color: var(--text); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #1a1a1a; font-weight: 600; }
+.btn[aria-pressed="true"] { border-color: var(--accent); }
+.form-error { color: var(--down); font-size: 13px; }
+.form-ok { color: var(--up); font-size: 13px; }
+.small { font-size: 12.5px; }
+code { font: 12.5px var(--mono); background: var(--raise); border-radius: 4px; padding: 1px 5px; }
+.choice { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.choice-card {
+  display: grid; gap: 6px; text-align: left; padding: 16px 18px; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px;
+}
+.choice-card:hover { border-color: var(--text); }
+.choice-card[aria-checked="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.choice-want { border-style: dashed; border-color: var(--accent); }
+.choice-state { font: 600 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.choice-card[aria-checked="true"] .choice-state { color: var(--accent); }
+.howto, .steps-list { margin: 0; padding-left: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; color: var(--muted); }
+.howto strong, .steps-list strong { color: var(--text); }
+.steps-list li > pre, .steps-list li > .actions { margin-top: 8px; }
+.steps-list a { color: var(--accent); }
+.snippet {
+  margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  font: 12px/1.5 var(--mono); color: var(--text); overflow-x: auto; white-space: pre;
+}
+.chat-pick { display: flex; flex-wrap: wrap; gap: 8px; }
+.firing { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.firing li { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.firing .dot { align-self: center; }
+@media (max-width: 640px) {
+  .page { padding: 0 16px 40px; }
+  .top { flex-wrap: wrap; row-gap: 10px; }
+  .tabs { order: 3; width: 100%; margin: 0; overflow-x: auto; }
+  .top-meta { gap: 10px; }
+  .field-row { flex-wrap: wrap; }
+  .field-row input { flex-basis: 100%; }
+  .settings h1, .signin h1 { font-size: 26px; }
+}

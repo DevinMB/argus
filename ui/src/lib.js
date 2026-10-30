@@ -314,3 +314,50 @@ export function recentMerges(repos = [], limit = 8) {
     .sort((a, b) => b.merged_at - a.merged_at)
     .slice(0, limit);
 }
+
+// --- settings and alerts ---
+
+// What the API's validation errors mean, per field, in words.
+const FIELD_HELP = {
+  telegram_token: "That does not look like a bot token. BotFather gives one like 123456789:AAE...",
+  chat_id: "A chat ID is a number (negative for groups and channels) or @channelname.",
+  link: "Use the address you open Argus at, starting with https:// or http://.",
+  watch_url: "Paste the full ping URL, starting with https://.",
+  password: "Use at least 10 characters.",
+  new: "Use at least 10 characters.",
+};
+
+export function errorText(detail) {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return [...new Set(detail.map((e) => FIELD_HELP[e.loc?.at(-1)] ?? e.msg))].join(" ");
+  }
+  return String(detail);
+}
+
+// One sentence on how paging works, for the Checks page.
+export function pagingSentence(alerts, critical) {
+  const marked = `${critical} ${critical === 1 ? "check is" : "checks are"} marked pages`;
+  if (!alerts) return `${marked}.`;
+  if (alerts.sender === "prometheus") {
+    return `${marked}: if one goes down, Prometheus and Alertmanager send it on. The rest show here only.`;
+  }
+  if (!alerts.ready) {
+    return `${marked}, but nothing sends alerts yet: set up Telegram on the Alerts page.`;
+  }
+  return `${marked}: if one goes down, Argus sends it to Telegram. The rest show here only.`;
+}
+
+export function watcherSentence(alerts) {
+  if (alerts?.watched) {
+    return "An outside service expects a ping from Argus every minute, and alerts you if the pings stop.";
+  }
+  if (alerts?.sender === "prometheus") {
+    return "Prometheus alerts you if it cannot scrape Argus (the ArgusDown rule).";
+  }
+  return "Nothing watches Argus itself yet. If it stopped, nobody would tell you: add a watcher on the Alerts page.";
+}
+
+export const REPEATS = [[0, "Never"], [60, "Every hour"], [240, "Every 4 hours"],
+  [720, "Every 12 hours"], [1440, "Once a day"]];
