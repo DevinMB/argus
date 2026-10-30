@@ -68,6 +68,7 @@ class Snapshot:
     # stack path -> {relative file path: bytes}
     stacks: dict[str, dict[str, bytes]] = field(default_factory=dict)
     error: str = ""
+    hosts_text: dict[str, str] = field(default_factory=dict)  # hosts/<host> as written
 
 
 def image_re(owner: str, repo: str) -> re.Pattern:
@@ -116,7 +117,7 @@ class DirSource:
         digest = hashlib.sha256(json.dumps(
             [hosts, {k: {n: hashlib.sha256(b).hexdigest() for n, b in v.items()}
                      for k, v in stacks.items()}], sort_keys=True).encode()).hexdigest()
-        return Snapshot(digest[:12], hosts, stacks)
+        return Snapshot(digest[:12], hosts, stacks, hosts_text=texts)
 
 
 class GitHubSource:
@@ -168,7 +169,7 @@ class GitHubSource:
                     if data is not None:
                         files[path[len(stack) + 1:]] = data
             stacks[stack] = files
-        return Snapshot(sha[:12], hosts, stacks)
+        return Snapshot(sha[:12], hosts, stacks, hosts_text=texts)
 
 
 class Deploys:
@@ -254,13 +255,13 @@ class Deploys:
                     changed[key] = text
         return changed
 
-    async def bump(self, builds: list[tuple[str, str, str]]) -> str | None:
-        """Commit the new tags to the deploy repo in one commit, fast-forward only.
-        Returns the commit, or None when there was nothing to do."""
+    async def commit(self, files: dict[str, str], message: str) -> str:
+        """Write files to the deploy repo in one commit, fast-forward only, with
+        the deploy repo's own write token. Refuses when the repo moved since
+        Argus read it."""
         src, token = self.source(), self.settings.secret(WRITE_TOKEN)
-        changed = self.bumps(builds)
-        if not changed or not isinstance(src, GitHubSource) or not token:
-            return None
+        if not isinstance(src, GitHubSource) or not token:
+            raise ValueError("no deploy repo on GitHub with a write token")
         base = f"/repos/{src.full_name}"
         h = {"Authorization": f"Bearer {token}"}
         c = self.poller.client
@@ -270,26 +271,40 @@ class Deploys:
 
         branch = src.branch or (await get(base))["default_branch"]
         parent = (await get(f"{base}/git/ref/heads/{branch}"))["object"]["sha"]
-        if parent[:12] != self.snapshot.commit:
-            return None  # the repo moved since we read it: next round reads it again
+        if self.snapshot is None or parent[:12] != self.snapshot.commit:
+            raise ValueError("the deploy repo changed since Argus read it; try again in a minute")
         commit = await get(f"{base}/git/commits/{parent}")
         tree = (await c.post(f"{base}/git/trees", headers=h, auth=None, json={
             "base_tree": commit["tree"]["sha"],
             "tree": [{"path": p, "mode": "100644", "type": "blob", "content": t}
-                     for p, t in sorted(changed.items())]})).raise_for_status().json()
+                     for p, t in sorted(files.items())]})).raise_for_status().json()
+        new = (await c.post(f"{base}/git/commits", headers=h, auth=None, json={
+            "message": message, "tree": tree["sha"], "parents": [parent]}))
+        new = new.raise_for_status().json()
+        # force=false: GitHub refuses unless it is a fast-forward of what we read.
+        (await c.patch(f"{base}/git/refs/heads/{branch}", headers=h, auth=None,
+                       json={"sha": new["sha"], "force": False})).raise_for_status()
+        log.info("committed to %s: %s", src.full_name, message.splitlines()[0])
+        return new["sha"]
+
+    async def bump(self, builds: list[tuple[str, str, str]]) -> str | None:
+        """Commit the new tags to the deploy repo in one commit. Returns the
+        commit, or None when there was nothing to do or the repo moved."""
+        changed = self.bumps(builds)
+        if not changed or not isinstance(self.source(), GitHubSource) \
+                or not self.settings.has_secret(WRITE_TOKEN):
+            return None
         what = ", ".join(sorted({f"{repo} sha-{sha[:7]}" for owner, repo, sha in builds
                                  if any(image_re(owner, repo).search(t)
                                         for t in changed.values())}))
         msg = f"Deploy: {what}\n\nTag bump by Argus after a green build on main.\n" + "".join(
             f"- {p}\n" for p in sorted(changed))
-        new = (await c.post(f"{base}/git/commits", headers=h, auth=None, json={
-            "message": msg, "tree": tree["sha"], "parents": [parent]})).raise_for_status().json()
-        # force=false: GitHub refuses unless it is a fast-forward of what we read.
-        (await c.patch(f"{base}/git/refs/heads/{branch}", headers=h, auth=None,
-                       json={"sha": new["sha"], "force": False})).raise_for_status()
-        log.info("bumped %s in %s (%s)", what, src.full_name, new["sha"][:7])
+        try:
+            sha = await self.commit(changed, msg)
+        except ValueError:
+            return None  # moved meanwhile: the next round reads it again
         await self.refresh()
-        return new["sha"]
+        return sha
 
     async def bump_green_builds(self) -> None:
         """Every polled repo whose newest main build is green: its sha goes out."""
@@ -337,9 +352,14 @@ class Deploys:
             digest = hashlib.sha256(json.dumps(
                 [{n: hashlib.sha256(b).hexdigest() for n, b in files.items()}, env],
                 sort_keys=True).encode()).hexdigest()[:16]
-            out.append({"path": path, "name": path.rsplit("/", 1)[-1], "digest": digest,
-                        "files": {n: base64.b64encode(b).decode() for n, b in files.items()},
-                        "env": env_text(env)})
+            stack = {"path": path, "name": path.rsplit("/", 1)[-1], "digest": digest,
+                     "files": {n: base64.b64encode(b).decode() for n, b in files.items()},
+                     "env": env_text(env)}
+            # Adopted: it lives in its own folder on the host (see adopt.py).
+            where = self.settings.get("stack.dir." + path)
+            if where:
+                stack["dir"] = where
+            out.append(stack)
         return out
 
     async def pull_credential(self) -> dict | None:

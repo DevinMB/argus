@@ -41,6 +41,8 @@ type Report struct {
 	Local          LocalTime      `json:"local"`
 	Snapshot       string         `json:"snapshot,omitempty"` // "zfs" when / can be snapshotted
 	Patch          *PatchState    `json:"patch,omitempty"`
+	PolicyRoots    []string       `json:"policy_roots,omitempty"` // folders deploys may use
+	Collected      []Collected    `json:"collected,omitempty"`
 }
 
 type Container struct {
@@ -51,6 +53,9 @@ type Container struct {
 	Status  string `json:"status"`
 	Project string `json:"project"`
 	Ports   []int  `json:"ports"` // published TCP ports on the host
+	// Where Compose started it from: the project's folder and its compose files.
+	WorkingDir  string   `json:"working_dir,omitempty"`
+	ConfigFiles []string `json:"config_files,omitempty"`
 }
 
 type Disk struct {
@@ -228,9 +233,21 @@ func parseContainers(body []byte) ([]Container, error) {
 		slices.Sort(ports)
 		out = append(out, Container{Name: name, Image: c.Image, State: c.State,
 			Health: healthOf(c.Status), Status: c.Status,
-			Project: c.Labels["com.docker.compose.project"], Ports: ports})
+			Project: c.Labels["com.docker.compose.project"], Ports: ports,
+			WorkingDir:  c.Labels["com.docker.compose.project.working_dir"],
+			ConfigFiles: splitNonEmpty(c.Labels["com.docker.compose.project.config_files"], ",")})
 	}
 	return out, nil
+}
+
+func splitNonEmpty(s, sep string) []string {
+	var out []string
+	for _, p := range strings.Split(s, sep) {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func healthOf(status string) string {

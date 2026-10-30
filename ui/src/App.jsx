@@ -173,6 +173,12 @@ export default function App() {
       </header>
 
       {error && data && <p className="banner banner-error">Showing the last good data: {error}</p>}
+      {session?.signed_in && data?.start && !data.start.exported_at && data.start.done >= 2 && (
+        <p className="banner banner-warn">
+          Argus's own settings are not backed up yet: its secrets and hosts live only in its data volume.{" "}
+          <a href="#/account">Export them</a>.
+        </p>
+      )}
       {data?.info.config_reload_ok === false && (
         <p className="banner banner-warn">
           The newest argus.yml was rejected; the previous config is still running.

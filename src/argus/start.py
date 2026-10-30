@@ -73,7 +73,8 @@ def suggestions(companions: list[dict], checks) -> list[dict]:
 
 
 def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
-         companions: list[dict], hidden: bool, patched: int = 0) -> dict:
+         companions: list[dict], hidden: bool, patched: int = 0,
+         exported_at: float | None = None) -> dict:
     sugg = suggestions(companions, rt.config.checks)
     reporting = [h for h in companions if h["status"] == "ok"]
     stacks = [s for v in deploy_views for s in v["stacks"]]
@@ -109,6 +110,8 @@ def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
     services = sugg
     return {
         "hidden": hidden,
+        # Argus's own data: a warning on the home page until an export is taken.
+        "exported_at": exported_at,
         "steps": steps,
         "done": sum(s["done"] for s in steps),
         "suggestions": [s for s in sugg if not s["covered"]],
