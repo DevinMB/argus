@@ -143,6 +143,7 @@ function Repos({ session, view, onView, setError }) {
 function Deploys({ session, view, setError }) {
   const [d, setD] = useState(null);
   const [token, setToken] = useState("");
+  const [write, setWrite] = useState("");
   useEffect(() => { send("GET", "/api/deploys").then(setD, (e) => setError(e.message)); }, [setError]);
   if (!d) return null;
   const save = async (body) => {
@@ -150,6 +151,7 @@ function Deploys({ session, view, setError }) {
     try {
       setD(await send("PUT", "/api/deploys", body, session.csrf));
       setToken("");
+      setWrite("");
     } catch (e) {
       setError(e.message);
     }
@@ -181,6 +183,24 @@ function Deploys({ session, view, setError }) {
           At {d.commit}, read {agoText(Date.now() / 1000 - d.read_at)}.{" "}
           {hosts.length ? hosts.map(([h, s]) => `${h}: ${s.length}`).join(" · ") : "No hosts/ files yet."}
         </p>
+      )}
+      {!folder && d.repo && (
+        <form className="field" onSubmit={(e) => { e.preventDefault(); save({ write_token: write }); }}>
+          <span>Tag bumps</span>
+          <small>
+            When an app's main build is green, Argus writes its new image tag into {d.repo}, and the
+            hosts deploy it. That needs a fine-grained token for <strong>{d.repo} only</strong>, with
+            Contents: read and write. Argus's app stays read-only everywhere else.
+          </small>
+          <div className="field-row">
+            <input type="password" value={write} onChange={(e) => setWrite(e.target.value.trim())} autoComplete="off"
+                   placeholder={d.write_token_set ? "saved; paste a new one to replace it" : "github_pat_…"}
+                   aria-label="Deploy repo write token" />
+            <button className="btn" disabled={!write}>Save</button>
+            {d.write_token_set && <button className="btn" type="button" onClick={() => save({ write_token: "" })}>Remove</button>}
+          </div>
+          {!d.write_token_set && <small className="st-failing">Off: tags are not bumped until a token is saved.</small>}
+        </form>
       )}
       <form className="field" onSubmit={(e) => { e.preventDefault(); save({ pull_token: token }); }}>
         <span>Private images</span>

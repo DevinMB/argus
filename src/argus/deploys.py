@@ -38,6 +38,11 @@ log = logging.getLogger("argus.deploys")
 REPO = "deploy.repo"  # owner/name of the deploy repo
 BRANCH = "deploy.branch"  # empty: its default branch
 PULL_TOKEN = "deploy.pull_token"  # noqa: S105 (a setting name) secret: registry read token
+# secret: a fine-grained token for the deploy repo alone, contents: write. Tag
+# bumps use it; the GitHub App stays read-only everywhere, so a compromised
+# Argus cannot write to any app's code.
+WRITE_TOKEN = "deploy.write_token"  # noqa: S105 (a setting name)
+BUMP_GRACE = 1800  # seconds after a green build before a missing bump is a failure
 SECRETS = "stack.env."  # + stack path: secret JSON {KEY: value}
 MAX_FILE = 512 * 1024
 MAX_STACK = 4 * 1024 * 1024
@@ -63,6 +68,16 @@ class Snapshot:
     # stack path -> {relative file path: bytes}
     stacks: dict[str, dict[str, bytes]] = field(default_factory=dict)
     error: str = ""
+
+
+def image_re(owner: str, repo: str) -> re.Pattern:
+    """The repo's images: ghcr.io/<owner>/<repo>[-component]:sha-<commit>. A
+    -beta image follows another branch, so it is never main's."""
+    return re.compile(rf"(ghcr\.io/{re.escape(owner.lower())}/{re.escape(repo.lower())}"
+                      r"(-[a-z0-9-]+)?:sha-)([0-9a-f]{7,40})")
+
+
+COMPOSE = ("compose.yml", "compose.yaml", "docker-compose.yml")
 
 
 def parse_hosts(name_to_text: dict[str, str]) -> dict[str, list[str]]:
@@ -165,6 +180,7 @@ class Deploys:
         self.error = ""
         self._source = None
         self._key = None
+        self.bump_error = ""
 
     def source(self):
         if self.folder:
@@ -197,9 +213,97 @@ class Deploys:
         while True:
             try:
                 await self.refresh()
+                await self.bump_green_builds()
             except Exception:
                 log.exception("deploy refresh crashed")
             await asyncio.sleep(every)
+
+    # --- the pipeline: where a repo's images run, and bumping them ---
+
+    def placements(self, owner: str, repo: str) -> list[dict]:
+        """Each stack that runs one of the repo's images: its shas and hosts."""
+        snap = self.snapshot
+        if snap is None:
+            return []
+        rx, out = image_re(owner, repo), []
+        for path, files in snap.stacks.items():
+            text = "".join(files.get(n, b"").decode(errors="replace") for n in COMPOSE)
+            shas = sorted({m.group(3)[:7] for m in rx.finditer(text) if m.group(2) != "-beta"})
+            if shas:
+                out.append({"path": path, "shas": shas,
+                            "hosts": sorted(h for h, st in snap.hosts.items() if path in st)})
+        return out
+
+    def bumps(self, builds: list[tuple[str, str, str]]) -> dict[str, str]:
+        """New compose texts for green builds: {file path in the repo: text}."""
+        snap = self.snapshot
+        if snap is None:
+            return {}
+        changed: dict[str, str] = {}
+        for path, files in snap.stacks.items():
+            for name in COMPOSE:
+                if name not in files:
+                    continue
+                key = f"{path}/{name}"
+                text = changed.get(key, files[name].decode(errors="replace"))
+                for owner, repo, sha in builds:
+                    text = image_re(owner, repo).sub(
+                        lambda m, sha=sha: m.group(0) if m.group(2) == "-beta"
+                        else m.group(1) + sha[:7], text)
+                if text != files[name].decode(errors="replace"):
+                    changed[key] = text
+        return changed
+
+    async def bump(self, builds: list[tuple[str, str, str]]) -> str | None:
+        """Commit the new tags to the deploy repo in one commit, fast-forward only.
+        Returns the commit, or None when there was nothing to do."""
+        src, token = self.source(), self.settings.secret(WRITE_TOKEN)
+        changed = self.bumps(builds)
+        if not changed or not isinstance(src, GitHubSource) or not token:
+            return None
+        base = f"/repos/{src.full_name}"
+        h = {"Authorization": f"Bearer {token}"}
+        c = self.poller.client
+
+        async def get(url: str) -> dict:
+            return (await c.get(url, headers=h, auth=None)).raise_for_status().json()
+
+        branch = src.branch or (await get(base))["default_branch"]
+        parent = (await get(f"{base}/git/ref/heads/{branch}"))["object"]["sha"]
+        if parent[:12] != self.snapshot.commit:
+            return None  # the repo moved since we read it: next round reads it again
+        commit = await get(f"{base}/git/commits/{parent}")
+        tree = (await c.post(f"{base}/git/trees", headers=h, auth=None, json={
+            "base_tree": commit["tree"]["sha"],
+            "tree": [{"path": p, "mode": "100644", "type": "blob", "content": t}
+                     for p, t in sorted(changed.items())]})).raise_for_status().json()
+        what = ", ".join(sorted({f"{repo} sha-{sha[:7]}" for owner, repo, sha in builds
+                                 if any(image_re(owner, repo).search(t)
+                                        for t in changed.values())}))
+        msg = f"Deploy: {what}\n\nTag bump by Argus after a green build on main.\n" + "".join(
+            f"- {p}\n" for p in sorted(changed))
+        new = (await c.post(f"{base}/git/commits", headers=h, auth=None, json={
+            "message": msg, "tree": tree["sha"], "parents": [parent]})).raise_for_status().json()
+        # force=false: GitHub refuses unless it is a fast-forward of what we read.
+        (await c.patch(f"{base}/git/refs/heads/{branch}", headers=h, auth=None,
+                       json={"sha": new["sha"], "force": False})).raise_for_status()
+        log.info("bumped %s in %s (%s)", what, src.full_name, new["sha"][:7])
+        await self.refresh()
+        return new["sha"]
+
+    async def bump_green_builds(self) -> None:
+        """Every polled repo whose newest main build is green: its sha goes out."""
+        builds = [(t.owner, t.repo.name, s["main"]["sha"])
+                  for t in self.poller.targets
+                  if (s := self.poller.repos.get(t.name)) and s.get("main")
+                  and s["main"]["status"] == "success" and not t.repo.deploy]
+        if builds:
+            try:
+                await self.bump(builds)
+                self.bump_error = ""
+            except httpx.HTTPError as e:
+                self.bump_error = f"tag bump failed: {type(e).__name__}: {e}"[:300]
+                log.warning(self.bump_error)
 
     # --- per host ---
 
