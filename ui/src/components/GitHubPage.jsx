@@ -1,0 +1,229 @@
+import { useCallback, useEffect, useState } from "react";
+import { send } from "../api.js";
+import { agoText, safeHref } from "../lib.js";
+
+// GitHub app names are unique across GitHub, so the default carries this host's name.
+const defaultName = () => `Argus ${window.location.hostname}`.replace(/[^A-Za-z0-9 ._-]/g, "-").slice(0, 34);
+
+function Ext({ href, children }) {
+  const safe = safeHref(href);
+  return safe ? <a href={safe} target="_blank" rel="noreferrer">{children}</a> : <span>{children}</span>;
+}
+
+// "Connect GitHub": Argus makes its own GitHub App through GitHub's manifest flow.
+function Connect({ session, setError }) {
+  const [name, setName] = useState(defaultName);
+  const [org, setOrg] = useState("");
+  const [where, setWhere] = useState("me");
+  const [busy, setBusy] = useState(false);
+  const go = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const m = await send("POST", "/api/github/manifest",
+        { url: window.location.origin, name, org: where === "org" ? org : "" }, session.csrf);
+      // GitHub takes the manifest as a form post; the browser goes there and back.
+      const form = document.createElement("form");
+      form.method = "post";
+      form.action = m.action;
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "manifest";
+      input.value = m.manifest;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="panel" onSubmit={go}>
+      <h2 className="eyebrow">Connect GitHub</h2>
+      <p>
+        Argus makes its own GitHub App on your account, in two clicks on GitHub. Then you choose
+        which repos it may see. It can only read: pull requests, CI runs, security alerts and code.
+        Nothing needs to reach Argus from the internet; it asks GitHub every minute.
+      </p>
+      <label className="field">
+        <span>App name</span>
+        <input value={name} onChange={(e) => setName(e.target.value)} required minLength={3} maxLength={34} />
+        <small>Unique across GitHub. If GitHub says the name is taken, change it here and try again.</small>
+      </label>
+      <div className="field">
+        <span>Make it under</span>
+        <label className="toggle"><input type="radio" checked={where === "me"} onChange={() => setWhere("me")} />
+          <span>My personal account</span></label>
+        <label className="toggle"><input type="radio" checked={where === "org"} onChange={() => setWhere("org")} />
+          <span>An organization I own</span></label>
+        {where === "org" && (
+          <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="organization name"
+                 aria-label="Organization" required pattern="[A-Za-z0-9\-]{1,39}" spellCheck="false" />
+        )}
+      </div>
+      <div className="actions">
+        <button className="btn btn-primary" disabled={busy}>{busy ? "Going to GitHub…" : "Connect GitHub"}</button>
+      </div>
+    </form>
+  );
+}
+
+function PasteToken({ session, view, onView, setError }) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (value) => {
+    setBusy(true);
+    setError(null);
+    try {
+      onView(await send("PUT", "/api/github", { token: value }, session.csrf));
+      setToken("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <details className="panel" open={view.source === "token"}>
+      <summary className="eyebrow">{view.source === "token" ? "The pasted token" : "Or paste a token instead"}</summary>
+      <p className="muted">
+        For accounts that cannot make apps. On GitHub: Settings, Developer settings, Fine-grained
+        tokens. Choose the repos, and give it read-only access to Actions, Contents, Dependabot
+        alerts, Metadata and Pull requests. Argus keeps it encrypted and never shows it again.
+      </p>
+      <form onSubmit={(e) => { e.preventDefault(); save(token); }} className="field-row">
+        <input type="password" value={token} onChange={(e) => setToken(e.target.value.trim())}
+               placeholder={view.token_set ? "saved; paste a new one to replace it" : "github_pat_…"}
+               aria-label="GitHub token" autoComplete="off" required />
+        <button className="btn" disabled={busy}>Save</button>
+        {view.token_set && <button className="btn" type="button" disabled={busy} onClick={() => save("")}>Remove</button>}
+      </form>
+    </details>
+  );
+}
+
+function Repos({ session, view, onView, setError }) {
+  const shown = view.repos.filter((r) => !r.archived && !r.hidden).length;
+  const toggle = async (r) => {
+    const hidden = view.repos.filter((x) => x.hidden).map((x) => x.full_name);
+    const next = r.hidden ? hidden.filter((n) => n !== r.full_name) : [...hidden, r.full_name];
+    try {
+      onView(await send("PUT", "/api/github", { hidden: next }, session.csrf));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  return (
+    <div className="panel">
+      <h2 className="eyebrow">Repos <span className="count">{shown} shown</span></h2>
+      {view.found_error && <p className="form-error">Listing repos failed: {view.found_error}</p>}
+      {view.repos.length === 0 && !view.found_error && (
+        <p className="muted">No repos yet. {view.source === "app" && "Install the app on the repos to watch."}</p>
+      )}
+      <ul className="repo-list">
+        {view.repos.map((r) => (
+          <li key={r.full_name}>
+            <label className="toggle">
+              <input type="checkbox" checked={!r.hidden && !r.archived} disabled={r.archived}
+                     onChange={() => toggle(r)} />
+              <span>
+                <strong>{r.full_name}</strong>
+                <small>{r.archived ? "archived: never shown" : r.private ? "private" : "public"}</small>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export default function GitHubPage({ session }) {
+  const [view, setView] = useState(null);
+  const [error, setError] = useState(null);
+  const [confirm, setConfirm] = useState(false);
+  const load = useCallback(async (refresh) => {
+    try {
+      setView(await (refresh ? send("POST", "/api/github/refresh", {}, session.csrf)
+        : send("GET", "/api/github")));
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [session.csrf]);
+  // Back from installing the app on GitHub: look for the new repos at once.
+  useEffect(() => { load(window.location.hash.includes("installation_id")); }, [load]);
+  if (!view) return <section className="settings"><h1>GitHub</h1><p className="muted">{error ?? "Loading…"}</p></section>;
+
+  const disconnect = async () => {
+    try {
+      setView(await send("POST", "/api/github/disconnect", {}, session.csrf));
+      setConfirm(false);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <section className="settings">
+      <h1>GitHub</h1>
+      <p className="lede">
+        Argus reads each repo's update PRs, CI runs and security alerts, and shows where every
+        change is on its way to running. <a href="#/updates">Open Updates</a>.
+      </p>
+      {view.connect_error && <p className="banner banner-error">Connecting did not finish: {view.connect_error}</p>}
+      {error && <p className="banner banner-error" role="alert">{error}</p>}
+      {view.from_config && (
+        <p className="banner banner-warn">
+          argus.yml lists its own repos, so Updates shows those. The list below is what this
+          connection can see.
+        </p>
+      )}
+
+      {view.source === "app" && (
+        <div className="panel">
+          <h2 className="eyebrow">Connected</h2>
+          <p>
+            Through the GitHub App <strong><Ext href={view.app.html_url}>{view.app.name}</Ext></strong> on {view.app.owner}.
+            {view.last_success && <> Last read {agoText(Date.now() / 1000 - view.last_success)}.</>}
+          </p>
+          {view.installations.length === 0 ? (
+            <p className="st-failing">Not installed anywhere yet: <Ext href={view.install_url}>install it on your repos</Ext>.</p>
+          ) : (
+            <ul className="repo-list">
+              {view.installations.map((i) => (
+                <li key={i.id}>
+                  {i.account}: {i.selection === "all" ? "all repos" : "chosen repos"}{" "}
+                  · <Ext href={i.url}>change which repos</Ext>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="actions">
+            <Ext href={view.install_url}>Install on another account</Ext>
+            <button className="btn" onClick={() => load(true)}>Look for new repos</button>
+          </div>
+          {!confirm && <button className="link-button small" onClick={() => setConfirm(true)}>Disconnect…</button>}
+          {confirm && (
+            <p className="small">
+              Argus forgets the app's key at once. Delete the app on GitHub as well, in{" "}
+              <Ext href={view.settings_url}>its settings</Ext>.{" "}
+              <button className="btn" onClick={disconnect}>Disconnect</button>{" "}
+              <button className="link-button" onClick={() => setConfirm(false)}>Keep</button>
+            </p>
+          )}
+        </div>
+      )}
+      {view.source === "file" && (
+        <div className="panel">
+          <h2 className="eyebrow">Connected</h2>
+          <p>With the token file Argus was started with (ARGUS_GITHUB_TOKEN_FILE). Connecting an app here replaces it.</p>
+        </div>
+      )}
+
+      {view.source !== "app" && <Connect session={session} setError={setError} />}
+      {view.source !== "app" && <PasteToken session={session} view={view} onView={setView} setError={setError} />}
+      {view.source !== "none" && <Repos session={session} view={view} onView={setView} setError={setError} />}
+    </section>
+  );
+}

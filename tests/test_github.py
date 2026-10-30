@@ -115,7 +115,7 @@ async def test_poll_reads_the_pipeline():
     assert shop["main"]["trivy"] == "success" and shop["main"]["failed_step"] is None
     # Only Dependabot's PRs are updates; the human one is not.
     assert [u["number"] for u in shop["updates"]] == [12]
-    assert shop["updates"][0]["waits_for_devin"] and shop["updates"][0]["ci"] == "success"
+    assert shop["updates"][0]["waits_for_you"] and shop["updates"][0]["ci"] == "success"
     # Merged in the last 14 days only, unmerged ones skipped.
     assert [(m["number"], m["by"]) for m in shop["merged"]] == [(10, GATE)]
     assert shop["alerts"][0]["severity"] == "critical"
@@ -200,15 +200,15 @@ def test_track_all_the_way_to_healthy():
     assert steps[2]["detail"] == "sha-abc1234, Trivy clean"
 
 
-def test_track_waits_for_devin_on_a_major():
-    up = {"number": 12, "title": "Bump react", "url": "u", "ci": "success", "waits_for_devin": True}
+def test_track_waits_for_you_on_a_major():
+    up = {"number": 12, "title": "Bump react", "url": "u", "ci": "success", "waits_for_you": True}
     s = track(state(updates=[up]), UP, FRESH, NOW)
     assert s[0]["status"] == "waiting" and "waits for you" in s[0]["detail"]
 
 
 def test_track_red_update_ci_outranks_waiting():
-    ups = [{"number": 12, "title": "Major", "url": "u", "ci": "success", "waits_for_devin": True},
-           {"number": 14, "title": "Patch", "url": "v", "ci": "failure", "waits_for_devin": False}]
+    ups = [{"number": 12, "title": "Major", "url": "u", "ci": "success", "waits_for_you": True},
+           {"number": 14, "title": "Patch", "url": "v", "ci": "failure", "waits_for_you": False}]
     s = track(state(updates=ups), UP, FRESH, NOW)
     assert s[0]["status"] == "failed" and s[0]["url"] == "v"
 
@@ -333,7 +333,7 @@ repos:
 
 
 @pytest.mark.parametrize("extra, msg", [
-    ("repos: [{name: shop}]", "need a github section"),
+    ("repos: [{name: shop, stack: sites/home/shop}]", "with a stack need a github section"),
     ("github: {owner: O}\nrepos: [{name: shop, check: nope}]", "no check named nope"),
     ("github: {owner: O}\nrepos: [{name: a, check: web}, {name: b, check: web}]",
      "more than one repo"),

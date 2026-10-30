@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useArgus, useSession } from "./api.js";
 import Account from "./components/Account.jsx";
 import AlertsPage from "./components/AlertsPage.jsx";
+import GitHubPage from "./components/GitHubPage.jsx";
 import SignIn from "./components/SignIn.jsx";
 import CheckDrawer from "./components/CheckDrawer.jsx";
 import CheckGrid from "./components/CheckGrid.jsx";
@@ -17,13 +18,14 @@ import { acrossSites, ago, agoText, byStatus, filterChecks, groupChecks, headlin
 const STATUS_FILTERS = [["all", "All"], ["problems", "Problems"], ["up", "Up"]];
 
 // The view and the selected check live in the hash (#/updates, #/updates/<repo>,
-// #/hosts, #/alerts, #/account, #/check/<name>) so a link can open any of them. A
+// #/hosts, #/alerts, #/account, #/github, #/check/<name>) so a link can open any of them. A
 // check's drawer opens over the Checks view.
 function useView() {
   const read = () => {
     const m = window.location.hash.match(/^#\/updates(?:\/(.+))?$/);
     if (m) return ["updates", m[1] && decodeURIComponent(m[1])];
-    const page = window.location.hash.match(/^#\/(hosts|alerts|account)$/);
+    // #/github may carry GitHub's ?installation_id=... after an install.
+    const page = window.location.hash.match(/^#\/(hosts|alerts|account|github)(?:\?.*)?$/);
     return page ? [page[1], null] : ["checks", null];
   };
   const [view, setView] = useState(read);
@@ -103,7 +105,7 @@ export default function App() {
   const alertsUnset = data?.info.alerts && !data.info.alerts.ready;
   const quietHosts = (data?.companions?.companions ?? []).filter((h) => h.status === "quiet").length;
   const locked = session?.view_requires_login && !session.signed_in;
-  const settingsView = view === "alerts" || view === "account";
+  const settingsView = view === "alerts" || view === "account" || view === "github";
 
   return (
     <div className="page">
@@ -149,6 +151,7 @@ export default function App() {
                 why={locked ? "This Argus asks for the admin password to view anything." : undefined} />
       )}
       {!locked && settingsView && session?.signed_in && view === "alerts" && <AlertsPage session={session} />}
+      {!locked && settingsView && session?.signed_in && view === "github" && <GitHubPage session={session} />}
       {!locked && settingsView && session?.signed_in && view === "account" && (
         <Account session={session} onSession={setSession} />
       )}

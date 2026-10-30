@@ -17,6 +17,15 @@ Open https://localhost:8080 (the certificate is Argus's own, so the browser warn
 - `ARGUS_TLS=off` serves plain HTTP (behind a proxy); `ARGUS_TLS_CERT` and `ARGUS_TLS_KEY` use your own certificate.
 - Forgot the password: `docker exec argus python -m argus reset-login`.
 
+## Connect GitHub
+
+On **Updates**, press **Connect GitHub**. Argus makes its own GitHub App on your account (or an organization) with GitHub's app-manifest flow: confirm on GitHub, then choose the repos it may see. Updates then shows each repo's pipeline: Dependabot's PRs, CI, the merge, the build and its Trivy scan. Majors are spotted from Dependabot's titles and wait for you.
+
+- Read-only permissions. The app's private key is kept encrypted in Argus and never shown.
+- Argus polls GitHub every minute with conditional requests (a 304 costs no rate limit), so nothing needs to reach Argus from the internet.
+- Cannot make apps? Paste a fine-grained read-only token on the GitHub page instead.
+- Archived repos are skipped; hide others on the GitHub page. In `argus.yml`, `repos:` can link a repo to its check (`{name: shop, check: web}`).
+
 ## Add a host
 
 On **Hosts**, press **Add a host** and run the command it shows on the host. It installs the companion (a single static binary, amd64 or arm64) as a systemd service. Within a minute the host shows its containers, disks, failed systemd units, pending updates and whether it needs a reboot.

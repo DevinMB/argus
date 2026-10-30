@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from argus import github
+from argus import ghauth, github
 from argus.alerts import (
     ALERTMANAGER_EXAMPLE,
     TOKEN,
@@ -63,7 +63,7 @@ MAX_COMPANION_REPORT = 512 * 1024  # bytes
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self'; "
                                "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
-                               "base-uri 'none'; form-action 'none'",
+                               "base-uri 'none'; form-action https://github.com",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -234,32 +234,47 @@ Admin = Annotated[Session, Depends(admin)]
 OPEN_API = {"/api/session", "/api/setup", "/api/login"}
 
 
-def _poller() -> github.Poller | None:
-    try:
-        token = TOKEN_FILE.read_text().strip()
-    except OSError:
-        return None
-    return github.Poller(token) if token else None
+class GitHubSettings(BaseModel):
+    """A change on the GitHub page. An empty token clears it."""
+
+    model_config = ConfigDict(extra="forbid")
+    token: str | None = Field(None, max_length=255,
+                              pattern=r"^$|^(github_pat_|ghp_)[A-Za-z0-9_]{20,250}$")
+    hidden: list[str] | None = Field(None, max_length=2000)
+
+
+class NewApp(BaseModel):
+    """"Connect GitHub": Argus's address as the browser sees it, and where the app lives."""
+
+    model_config = ConfigDict(extra="forbid")
+    url: str = Field(max_length=300)
+    # GitHub app names are unique across GitHub and at most 34 characters.
+    name: str = Field(min_length=3, max_length=34, pattern=r"^[A-Za-z0-9][A-Za-z0-9 ._-]*$")
+    org: str = Field("", pattern=r"^$|^[A-Za-z0-9-]{1,39}$")
+
+    _url = field_validator("url")(_http_url)
 
 
 def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                poller: github.Poller | None = None,
                alert_client: httpx.AsyncClient | None = None,
-               tls_pin: str | None = None) -> FastAPI:
+               tls_pin: str | None = None,
+               github_client: httpx.AsyncClient | None = None) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         rt = runtime or Runtime(
             Path(os.environ.get("ARGUS_CONFIG", "/config/argus.yml")),
             os.environ.get("ARGUS_DB", "/data/argus.db"),
         )
-        gh = poller or (_poller() if start_scheduler else None)
         key = load_key(Path(os.environ.get("ARGUS_KEY", rt.db_path.parent / "argus.key")))
         settings = Settings(rt.store.db, key)
         client = alert_client or httpx.AsyncClient()
+        gh_client = github_client or httpx.AsyncClient(timeout=20)
+        gh = poller or github.Poller(ghauth.credentials(settings, gh_client, TOKEN_FILE, rt.clock))
         alerter = Alerter(rt, settings, client)
         auth = Auth(rt.store.db, settings, rt.clock)
         auth.setup_code()  # logs it when there is no password yet
-        app.state.rt, app.state.gh = rt, gh
+        app.state.rt, app.state.gh, app.state.gh_client = rt, gh, gh_client
         app.state.settings, app.state.auth, app.state.alerter = settings, auth, alerter
         app.state.signer, app.state.tls_pin = Signer(settings), tls_pin
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
@@ -267,15 +282,16 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         if start_scheduler:
             tasks.append(asyncio.create_task(rt.run_forever()))
             tasks.append(asyncio.create_task(alerter.run_forever()))
-            if gh:
-                tasks.append(asyncio.create_task(github.run_forever(gh, lambda: rt.config)))
+            tasks.append(asyncio.create_task(github.run_forever(
+                gh, lambda: rt.config, lambda: set(settings.get(ghauth.HIDDEN, [])))))
         yield
         for task in tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        if gh:
-            await gh.aclose()
+        await gh.aclose()
+        if github_client is None:
+            await gh_client.aclose()
         if alert_client is None:
             await client.aclose()
         await rt.aclose()
@@ -435,6 +451,96 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         return Response(ALERTMANAGER_EXAMPLE, media_type="application/yaml", headers={
             "Content-Disposition": 'attachment; filename="alertmanager-example.yml"'})
 
+    # --- GitHub: the connection ---
+
+    def github_view(request: Request) -> dict:
+        s, gh = request.app.state.settings, request.app.state.gh
+        hidden = set(s.get(ghauth.HIDDEN, []))
+        about = gh.creds.describe() if gh.creds else {"source": "none"}
+        if about.get("app"):
+            about["settings_url"] = ghauth.settings_url(about["app"])
+        return {
+            **about,
+            "connect_error": s.get("github.connect_error"),
+            "token_set": s.has_secret(ghauth.TOKEN),
+            "file": TOKEN_FILE.is_file(),
+            "from_config": bool(rt(request).config.github and rt(request).config.repos),
+            "repos": [{**x, "hidden": x["full_name"] in hidden} for x in gh.found or []],
+            "found_error": gh.found_error,
+            "last_success": gh.last_success, "last_error": gh.last_error,
+            "rate_remaining": gh.rate and gh.rate[0],
+        }
+
+    async def reconnect(request: Request) -> None:
+        gh = request.app.state.gh
+        gh.connect(ghauth.credentials(request.app.state.settings, request.app.state.gh_client,
+                                      TOKEN_FILE, rt(request).clock))
+        await gh.discover(force=True)
+
+    @app.get("/api/github")
+    async def github_settings(request: Request, _: Admin) -> dict:
+        return github_view(request)
+
+    @app.put("/api/github")
+    async def github_change(body: GitHubSettings, request: Request, _: Admin) -> dict:
+        s = request.app.state.settings
+        if body.hidden is not None:
+            s.set(ghauth.HIDDEN, sorted(set(body.hidden)))
+        if body.token is not None:
+            if s.get(ghauth.APP):
+                raise HTTPException(409, "Argus's GitHub App is connected; disconnect it first")
+            s.set_secret(ghauth.TOKEN, body.token or None)
+            await reconnect(request)
+            if body.token and request.app.state.gh.found_error:
+                s.set_secret(ghauth.TOKEN, None)
+                await reconnect(request)
+                raise HTTPException(400, "GitHub refused that token; check it and its repo access")
+        return github_view(request)
+
+    @app.post("/api/github/refresh")
+    async def github_refresh(request: Request, _: Admin) -> dict:
+        await request.app.state.gh.discover(force=True)
+        return github_view(request)
+
+    @app.post("/api/github/manifest")
+    async def github_manifest(body: NewApp, request: Request, _: Admin) -> dict:
+        request.app.state.settings.set("github.connect_error", None)
+        return ghauth.manifest(request.app.state.settings, body.url, body.name, body.org,
+                               rt(request).clock)
+
+    @app.post("/api/github/disconnect")
+    async def github_disconnect(request: Request, _: Admin) -> dict:
+        s = request.app.state.settings
+        for secret in (ghauth.APP_KEY, ghauth.TOKEN):
+            s.set_secret(secret, None)
+        s.set(ghauth.APP, None)
+        await reconnect(request)
+        return github_view(request)
+
+    # GitHub sends the browser here after the user confirms the new app. Outside
+    # /api/: the session cookie (SameSite=strict) does not come along on a
+    # redirect from github.com, so the single-use state is what proves it.
+    @app.get("/github/manifest-callback")
+    async def github_callback(request: Request, code: str = "", state: str = "") -> Response:
+        s = request.app.state.settings
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", code):
+            s.set("github.connect_error", "GitHub sent no code back")
+            return Response(status_code=303, headers={"Location": "/#/github"})
+        try:
+            app_ = await ghauth.finish(s, request.app.state.gh_client, code, state,
+                                       rt(request).clock)
+        except (ghauth.ConnectError, httpx.HTTPError) as e:
+            s.set("github.connect_error", str(e) if isinstance(e, ghauth.ConnectError)
+                  else f"could not reach GitHub ({type(e).__name__})")
+            return Response(status_code=303, headers={"Location": "/#/github"})
+        s.set("github.connect_error", None)
+        request.app.state.gh.connect(ghauth.credentials(
+            s, request.app.state.gh_client, TOKEN_FILE, rt(request).clock))
+        # Next: install it on the repos to watch. GitHub then sends the browser
+        # back to /#/github (the app's setup URL).
+        return Response(status_code=303,
+                        headers={"Location": f"{app_['html_url']}/installations/new"})
+
     # --- companions: the UI's side ---
 
     @app.get("/api/companions")
@@ -559,21 +665,21 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         return [check_view(r, c) for c in r.config.checks]
 
     def repo_views(request: Request) -> list[dict]:
-        """Each configured repo's last polled state and track, in config order."""
+        """Each polled repo's state and track, in the order they were polled."""
         r, gh = rt(request), request.app.state.gh
-        if gh is None or r.config.github is None:
+        if not gh.connected:
             return []
         checks = {c.name: c for c in r.config.checks}
         beats = {h["name"]: h for h in r.heartbeat_views()}
+        stacks = r.config.github.stacks_repo if r.config.github else "the deploy repo"
         out = []
-        for repo in r.config.repos:
-            state = gh.repos.get(repo.name)
+        for t in gh.targets:
+            state = gh.repos.get(t.name)
             if state is None:
                 continue
-            c = checks.get(repo.check)
+            c = checks.get(t.repo.check)
             out.append({**state, "track": github.track(
-                state, c and check_view(r, c), beats, r.clock(), r.config.github.stacks_repo,
-                repo.deploy)})
+                state, c and check_view(r, c), beats, r.clock(), stacks, t.repo.deploy)})
         return out
 
     @app.get("/api/checks/{name}")
@@ -606,10 +712,10 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
     async def updates(request: Request) -> dict:
         r, gh = rt(request), request.app.state.gh
         return {
-            "enabled": gh is not None and r.config.github is not None,
-            "owner": r.config.github and r.config.github.owner,
-            "last_success": gh and gh.last_success,
-            "last_error": gh.last_error if gh else "",
+            "enabled": gh.connected,
+            "owners": sorted({t.owner for t in gh.targets}),
+            "last_success": gh.last_success,
+            "last_error": gh.last_error or gh.found_error,
             "now": r.clock(),
             "repos": repo_views(request),
         }
