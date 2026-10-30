@@ -136,6 +136,8 @@ export function siteNote(s) {
 // ---- the app pipeline (Updates view, tracks) ----
 
 export const GATE = "github-actions[bot]"; // the Dependabot merge gate merges as this
+// Merged by a bot: the gate, or Dependabot's own auto-merge.
+export const isAuto = (by) => by === GATE || by === "dependabot[bot]";
 // Links in API data are drawn only when they point at the web over https.
 export function safeHref(url) {
   return typeof url === "string" && /^https:\/\//.test(url) ? url : undefined;
@@ -176,15 +178,15 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 // One app's place in the life cycle: the column it sits in, a tone, a short
 // label and one sentence. What needs a person outranks what is moving, which
-// outranks "up to date". `you` marks the ones that need Devin.
+// outranks "up to date". `you` marks the ones that need the owner.
 export function lifecycle(repo) {
   const steps = repo.track ?? [];
   const step = (k) => steps.find((s) => s.key === k);
   const ups = repo.updates ?? [];
-  const red = ups.filter((u) => !u.waits_for_devin && u.ci === "failure");
-  const major = ups.filter((u) => u.waits_for_devin);
-  const green = ups.filter((u) => !u.waits_for_devin && u.ci === "success");
-  const testing = ups.filter((u) => !u.waits_for_devin && (u.ci === "running" || u.ci === "none"));
+  const red = ups.filter((u) => !u.waits_for_you && u.ci === "failure");
+  const major = ups.filter((u) => u.waits_for_you);
+  const green = ups.filter((u) => !u.waits_for_you && u.ci === "success");
+  const testing = ups.filter((u) => !u.waits_for_you && (u.ci === "running" || u.ci === "none"));
   const more = (list) => (list.length > 1 ? ` (and ${list.length - 1} more)` : "");
   const deployedAt = steps.find((s) => s.key === "deployed" && s.status === "done")?.at ?? null;
   const out = (column, tone, label, sentence, url, you = false) =>
@@ -234,14 +236,15 @@ export function lifecycle(repo) {
 
   const main = repo.main;
   if (!main) {
-    return out("live", "unknown", "Not tracked", "No CI runs on main, so Argus cannot follow its changes.");
+    return out("live", "unknown", "Not tracked", `No CI runs on ${repo.branch ?? "main"}, so Argus cannot follow its changes.`);
   }
   const deployed = step("deployed");
   const healthy = step("healthy");
   const change = `${main.title || `sha-${main.sha}`}`;
   if (!deployed) {
-    return out("live", "up", "Up to date",
-      `Built ${change}. It ships inside another app, so it has no deploy of its own.`);
+    return out("live", "up", "Up to date", repo.configured === false
+      ? `Built ${change}. Argus does not follow its deploys.`
+      : `Built ${change}. It ships inside another app, so it has no deploy of its own.`);
   }
   if (deployed.status === "not_wired") {
     return out("live", "unknown", "Built, not deployed", `${change} is built; ${deployed.detail.toLowerCase()}.`);

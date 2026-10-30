@@ -137,7 +137,8 @@ class Repo(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = Field(pattern=REPO)
+    # owner/name also works, to tell apart two owners' repos of one name.
+    name: str = Field(pattern=r"^([A-Za-z0-9-]{1,39}/)?[A-Za-z0-9._-]{1,100}$")
     # Its folder in the stacks repo, when stack-sync deploys it.
     stack: str = Field("", pattern=r"^$|^sites/[a-z0-9-]+/[a-z0-9-]+$")
     # The check that shows it is up; its tile gets this repo's track.
@@ -206,8 +207,10 @@ class Config(BaseModel):
         unknown = sorted(set(self.groups) - {c.group for c in self.checks})
         if unknown:
             raise ValueError(f"groups with no checks: {', '.join(unknown)}")
-        if self.repos and self.github is None:
-            raise ValueError("repos need a github section")
+        # Without a github section, repos only annotate the ones "Connect GitHub"
+        # finds (a check, say); stacks need the section's deploy repo.
+        if any(r.stack for r in self.repos) and self.github is None:
+            raise ValueError("repos with a stack need a github section")
         repo_names = [r.name for r in self.repos]
         dupes = sorted({n for n in repo_names if repo_names.count(n) > 1})
         if dupes:

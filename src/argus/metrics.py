@@ -130,7 +130,7 @@ class Collector:
                 "(the ArgusTestAlert rule fires on it), else 0.",
                 value=1 if self.alert_test() else 0,
             )
-        if self.gh is not None:
+        if self.gh is not None and self.gh.connected:
             yield from self.github()
         info = InfoMetricFamily("argus_build", "Running build and config.")
         info.add_metric([], {
@@ -187,7 +187,7 @@ class Collector:
             "When the oldest open alert of this severity was opened.", labels=["repo", "severity"],
         )
         prs = GaugeMetricFamily(
-            "argus_repo_update_prs", "Open Dependabot PRs: waiting (a major, for Devin), "
+            "argus_repo_update_prs", "Open Dependabot PRs: waiting (a major, for the owner), "
             "failing (CI red) or open (in CI or about to merge).", labels=["repo", "state"],
         )
         ci = GaugeMetricFamily(
@@ -203,7 +203,7 @@ class Collector:
                     oldest.add_metric([name, sev], min(a["created_at"] for a in found))
             counts = {"waiting": 0, "failing": 0, "open": 0}
             for p in s["updates"]:
-                if p["waits_for_devin"]:
+                if p["waits_for_you"]:
                     counts["waiting"] += 1
                 else:
                     counts["failing" if p["ci"] == "failure" else "open"] += 1

@@ -1,6 +1,12 @@
 """The app pipeline as GitHub sees it, for the Updates view and each tile's
-track (decision 0010). Polled every `github.poll` seconds with the read-only
-token and held in memory: a restart only waits for the next poll.
+track (decision 0010). Polled every `github.poll` seconds (a minute when the
+repos come from "Connect GitHub") and held in memory: a restart only waits for
+the next poll. Responses are cached by ETag; GitHub does not count a 304
+against the rate limit, so a quiet minute costs almost nothing.
+
+Which repos: the `repos` in argus.yml when there are any (this homelab), else
+every repo the connection can see, less the archived ones and those hidden on
+the GitHub page. argus.yml can still annotate a discovered repo (its check).
 
 Every step of a track comes from a real event: a PR, a workflow run, a commit
 in the stacks repo, a stack-sync heartbeat, the check itself. A step whose
@@ -14,20 +20,25 @@ import base64
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import httpx
 
 from argus.config import GitHub, Repo
+from argus.ghauth import REDISCOVER, Credentials, StaticToken
 
 log = logging.getLogger("argus.github")
 
 API = "https://api.github.com"
 GATE = "github-actions[bot]"  # the Dependabot merge gate merges as this
 DEPENDABOT = "dependabot[bot]"
-WAITS = "waits-for-devin"  # the gate's label for a major update
+WAITS = "waits-for-devin"  # DevinMB/workflows' gate labels majors so
+AUTO = {GATE, DEPENDABOT}  # merged by a bot: auto-merge
+DEFAULT_POLL = 60
+VERSIONS = re.compile(r"\bfrom v?(\d+)(?:\.(\d+))?\S* to v?(\d+)(?:\.(\d+))?")
 MERGED_WINDOW = 14 * 86400
 BUMP_GRACE = 1800  # seconds after a green build before a missing bump is a failure
 PR_REF = re.compile(r"\(#(\d+)\)|Merge pull request #(\d+)")
@@ -42,16 +53,67 @@ def _err(e: BaseException) -> str:
     return f"{type(e).__name__}: {e}"[:300]
 
 
+def is_major(title: str) -> bool:
+    """A Dependabot title that crosses a major version ("from 19.2.0 to 20.0.0").
+    Below 1.0, a minor bump counts as major, as semver says."""
+    m = VERSIONS.search(title)
+    if not m:
+        return False
+    a, a2, b, b2 = m.groups()
+    return a != b or (a == "0" and (a2 or "0") != (b2 or "0"))
+
+
+@dataclass(frozen=True)
+class Target:
+    """One repo to poll: where it lives and what argus.yml says about it."""
+
+    owner: str
+    repo: Repo
+    branch: str = "main"
+    key: str = ""  # the name the UI shows: the repo's, or owner/repo when owners mix
+    # Listed in argus.yml, which says how it deploys; a discovered repo's deploy
+    # is unknown until companions deploy it (M4).
+    configured: bool = True
+
+    @property
+    def name(self) -> str:
+        return self.key or self.repo.name
+
+
+class _Auth(httpx.Auth):
+    """Each request carries the token for the repo's owner (one per app installation)."""
+
+    def __init__(self, poller: Poller) -> None:
+        self.poller = poller
+
+    async def async_auth_flow(self, request):
+        parts = request.url.path.split("/")
+        owner = parts[2] if len(parts) > 2 and parts[1] == "repos" else None
+        creds = self.poller.creds
+        token = await creds.token_for(owner) if creds else None
+        if token:
+            request.headers["Authorization"] = f"Bearer {token}"
+        yield request
+
+
 class Poller:
-    def __init__(self, token: str, clock: Callable[[], float] = time.time,
+    def __init__(self, creds: Credentials | str | None, clock: Callable[[], float] = time.time,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.clock = clock
         self.client = httpx.AsyncClient(
-            base_url=API, timeout=20, transport=transport,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+            base_url=API, timeout=20, transport=transport, auth=_Auth(self),
+            headers={"Accept": "application/vnd.github+json",
                      "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "argus"},
         )
+        self.creds: Credentials | None = (StaticToken(creds, self.client, "file")
+                                          if isinstance(creds, str) else creds)
         self.repos: dict[str, dict] = {}
+        self.targets: list[Target] = []
+        self.found: list[dict] | None = None  # every repo the connection sees
+        self.found_at = 0.0
+        self.found_error = ""
+        self.etags: dict[str, tuple[str, Any]] = {}
+        self.rate: tuple[int, float] | None = None  # (remaining, reset time)
         # (repo, PR) -> who merged it. The PR list leaves merged_by out; a merged
         # PR never changes, so each is fetched once.
         self.merged_by: dict[tuple[str, int], str | None] = {}
@@ -61,24 +123,77 @@ class Poller:
     async def aclose(self) -> None:
         await self.client.aclose()
 
+    @property
+    def connected(self) -> bool:
+        return self.creds is not None
+
+    def connect(self, creds: Credentials | None) -> None:
+        """A new connection from the GitHub page: forget what the old one saw."""
+        self.creds, self.found, self.found_at, self.etags = creds, None, 0.0, {}
+        self.repos, self.targets, self.last_success, self.last_error = {}, [], None, ""
+
     async def _get(self, url: str, missing: tuple[int, ...] = (404,), **params) -> Any:
-        """JSON for a GET; None when the status is in `missing`."""
-        r = await self.client.get(url, params=params)
+        """JSON for a GET; None when the status is in `missing`. Unchanged answers
+        come from the ETag cache."""
+        key = str(httpx.URL(url, params=params))
+        cached = self.etags.get(key)
+        headers = {"If-None-Match": cached[0]} if cached else {}
+        r = await self.client.get(url, params=params, headers=headers)
+        if "x-ratelimit-remaining" in r.headers:
+            self.rate = (int(r.headers["x-ratelimit-remaining"]),
+                         float(r.headers.get("x-ratelimit-reset", 0)))
+        if r.status_code == 304 and cached:
+            return cached[1]
         if r.status_code in missing:
             return None
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        if r.headers.get("etag"):
+            self.etags[key] = (r.headers["etag"], data)
+        return data
 
-    async def poll(self, gh: GitHub, repos: tuple[Repo, ...]) -> None:
+    async def discover(self, force: bool = False) -> list[dict]:
+        """Every repo the connection sees, refreshed every ten minutes."""
+        if self.creds and (force or self.found is None
+                           or self.clock() - self.found_at > REDISCOVER):
+            try:
+                self.found = sorted(await self.creds.repos(), key=lambda r: r["full_name"].lower())
+                self.found_at, self.found_error = self.clock(), ""
+            except (httpx.HTTPError, KeyError, TypeError, ValueError) as e:
+                self.found_error = _err(e)
+                log.warning("listing GitHub repos failed: %s", self.found_error)
+        return self.found or []
+
+    async def targets_for(self, config, hidden: set[str]) -> list[Target]:
+        """argus.yml's repos when it lists any, else every repo the connection
+        sees that is not archived or hidden."""
+        if config.github and config.repos:
+            return [Target(config.github.owner, r) for r in config.repos]
+        notes = {r.name.lower(): r for r in config.repos}
+        shown = [r for r in await self.discover()
+                 if not r["archived"] and r["full_name"] not in hidden]
+        mixed = len({r["owner"].lower() for r in shown}) > 1
+        out = []
+        for r in shown:
+            note = notes.get(r["full_name"].lower()) or notes.get(r["name"].lower())
+            repo = Repo(name=r["name"], check=note.check if note else "",
+                        deploy=note.deploy if note else "")
+            out.append(Target(r["owner"], repo, r["default_branch"],
+                              r["full_name"] if mixed else r["name"], configured=False))
+        return out
+
+    async def poll(self, gh: GitHub | None, repos: Sequence[Repo | Target]) -> None:
         """Refresh every repo. On any error the previous results stay."""
+        targets = [t if isinstance(t, Target) else Target(gh.owner, t) for t in repos]
         try:
-            hosts = await self._hosts(gh) if any(r.stack for r in repos) else {}
-            states = await asyncio.gather(*(self._repo(gh, r, hosts) for r in repos))
+            hosts = await self._hosts(gh) if gh and any(t.repo.stack for t in targets) else {}
+            states = await asyncio.gather(*(self._repo(gh, t, hosts) for t in targets))
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as e:
             self.last_error = _err(e)
             log.warning("github poll failed, keeping the last results: %s", self.last_error)
             return
         self.repos = {s["name"]: s for s in states}
+        self.targets = targets
         self.last_success, self.last_error = self.clock(), ""
 
     async def _file(self, gh: GitHub, path: str) -> str | None:
@@ -98,12 +213,18 @@ class Poller:
                     out[line] = f["name"]
         return out
 
-    async def _repo(self, gh: GitHub, repo: Repo, hosts: dict[str, str]) -> dict:
-        base = f"/repos/{gh.owner}/{repo.name}"
+    async def _repo(self, gh: GitHub | None, t: Target, hosts: dict[str, str]) -> dict:
+        repo = t.repo
+        base = f"/repos/{t.owner}/{repo.name}"
         open_prs = await self._get(f"{base}/pulls", state="open", per_page=50) or []
         closed = await self._get(f"{base}/pulls", state="closed", sort="updated",
                                  direction="desc", per_page=30) or []
-        runs = await self._get(f"{base}/actions/workflows/ci.yml/runs", branch="main", per_page=10)
+        # ci.yml when the repo has one (the shared workflows' name), else the
+        # newest push build on the default branch, whatever its workflow.
+        runs = await self._get(f"{base}/actions/workflows/ci.yml/runs", branch=t.branch,
+                               per_page=10)
+        if runs is None:
+            runs = await self._get(f"{base}/actions/runs", branch=t.branch, per_page=20)
         run = next((x for x in (runs or {}).get("workflow_runs", [])
                     if x["event"] in ("push", "workflow_dispatch")), None)
         # Dependabot's version updates run as "dynamic" workflow runs.
@@ -117,8 +238,10 @@ class Poller:
             await self._merger(base, repo.name, p["number"])
         main = await self._main(base, repo.name, run) if run else None
         return {
-            "name": repo.name,
-            "url": f"https://github.com/{gh.owner}/{repo.name}",
+            "name": t.name,
+            "branch": t.branch,
+            "configured": t.configured,
+            "url": f"https://github.com/{t.owner}/{repo.name}",
             "check": repo.check or None,
             "main": main,
             "updates": [await self._update(base, p) for p in open_prs
@@ -137,7 +260,7 @@ class Poller:
                  "created_at": ts(a["created_at"]), "url": a["html_url"]}
                 for a in alerts
             ],
-            "stack": await self._stack(gh, repo, hosts) if repo.stack else None,
+            "stack": await self._stack(gh, repo, hosts) if gh and repo.stack else None,
             "dependabot": dependabot_runs((dyn or {}).get("workflow_runs", [])),
         }
 
@@ -183,7 +306,8 @@ class Poller:
             ci = "success"
         return {"number": pr["number"], "title": pr["title"], "url": pr["html_url"],
                 "created_at": ts(pr["created_at"]), "ci": ci,
-                "waits_for_devin": any(label["name"] == WAITS for label in pr["labels"])}
+                "waits_for_you": is_major(pr["title"])
+                or any(label["name"] == WAITS for label in pr["labels"])}
 
     async def _stack(self, gh: GitHub, repo: Repo, hosts: dict[str, str]) -> dict:
         path = f"{repo.stack}/compose.yml"
@@ -216,16 +340,23 @@ def dependabot_runs(runs: list[dict]) -> dict | None:
     return {"last_run": newest, "failed": bad and bad["name"], "url": bad and bad["html_url"]}
 
 
-async def run_forever(poller: Poller, config: Callable[[], Any]) -> None:
-    """Poll on the configured interval; the config is re-read each round."""
+async def run_forever(poller: Poller, config: Callable[[], Any],
+                      hidden: Callable[[], set[str]] = set) -> None:
+    """Poll on the configured interval; the config is re-read each round. Low on
+    rate limit, it waits for the reset rather than fail half a poll."""
     while True:
         cfg = config()
-        if cfg.github:
+        if poller.connected:
             try:
-                await poller.poll(cfg.github, cfg.repos)
+                targets = await poller.targets_for(cfg, hidden())
+                await poller.poll(cfg.github, targets)
             except Exception:
                 log.exception("github poll crashed")
-        await asyncio.sleep(cfg.github.poll if cfg.github else 60)
+        wait = cfg.github.poll if cfg.github else DEFAULT_POLL
+        if poller.rate and poller.rate[0] < 100:
+            wait = max(wait, poller.rate[1] - time.time() + 5)
+            log.warning("GitHub rate limit nearly used up; next poll in %ds", wait)
+        await asyncio.sleep(wait)
 
 
 TITLES = {"updates": "Update PRs", "merged": "Merged to main", "built": "Built and scanned",
@@ -234,8 +365,8 @@ TITLES = {"updates": "Update PRs", "merged": "Merged to main", "built": "Built a
 
 def _who(main: dict) -> str:
     if main["pr"] is None:
-        return "pushed to main"
-    by = "the gate" if main["merged_by"] == GATE else main["merged_by"]
+        return "pushed directly"
+    by = "the gate" if main["merged_by"] in AUTO else main["merged_by"]
     return f"#{main['pr']}, merged by {by}" if by else f"#{main['pr']}"
 
 
@@ -243,7 +374,7 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
           stacks_repo: str = "homelab-stacks", deploy: str = "") -> list[dict]:
     """The steps a change takes from update PR to healthy, for the newest change on main.
 
-    Statuses: done, running, waiting (for Devin), failed, pending (an earlier
+    Statuses: done, running, waiting (for the owner), failed, pending (an earlier
     step has not finished), not_wired (that part of the pipeline does not exist yet).
     A repo deployed by its own timer (`deploy`, a heartbeat) has no tag bump; one
     deployed by nothing (a library shipped inside another app) ends at the build.
@@ -258,8 +389,8 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
     dep = state.get("dependabot")
     n = len(state.get("alerts") or [])
     alerts = f". {n} open security alert{'s' if n > 1 else ''}" if n else ""
-    failing = [p for p in ups if p["ci"] == "failure" and not p["waits_for_devin"]]
-    waiting = [p for p in ups if p["waits_for_devin"]]
+    failing = [p for p in ups if p["ci"] == "failure" and not p["waits_for_you"]]
+    waiting = [p for p in ups if p["waits_for_you"]]
     more = lambda n: f" (+{n} more)" if n > 1 else ""  # noqa: E731
     if failing:
         add("updates", "failed", f"{failing[0]['title']}: CI failed{more(len(failing))}",
@@ -280,7 +411,7 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
     main = state["main"]
     built = main["status"] if main else "none"
     if main is None:
-        add("merged", "not_wired", "No ci.yml runs on main")
+        add("merged", "not_wired", f"No CI runs on {state.get('branch', 'main')}")
     else:
         pr_url = state["url"] + (f"/pull/{main['pr']}" if main["pr"] else "")
         add("merged", "done", f"{main['title']} ({_who(main)})", pr_url, main["started_at"])

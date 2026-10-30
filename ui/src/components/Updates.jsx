@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import Track from "./Track.jsx";
 import {
-  GATE, STAGES, agoText, dayText, lifecycle, lifecycleHeadline, nextWeekday, recentMerges, safeHref,
+  STAGES, isAuto, agoText, lifecycle, lifecycleHeadline, recentMerges, safeHref,
 } from "../lib.js";
 
 const CI = { success: "passed", failure: "failed", running: "running", none: "no CI yet" };
@@ -9,6 +9,7 @@ const GROUPS = [
   ["you", "Needs you", "A person has to act before these move again."],
   ["moving", "On the way", "The pipeline is working on these; nothing to do."],
   ["done", "Up to date", "Running their newest change."],
+  ["untracked", "Not tracked", "No CI runs on the default branch, so there is nothing to follow."],
 ];
 
 function Link({ href, className, children }) {
@@ -18,14 +19,15 @@ function Link({ href, className, children }) {
     : <span className={className}>{children}</span>;
 }
 
-const groupOf = (s) => (s.you ? "you" : s.tone === "accent" ? "moving" : "done");
+const untracked = (s) => s.label === "Not tracked";
+const groupOf = (s) => (s.you ? "you" : s.tone === "accent" ? "moving" : untracked(s) ? "untracked" : "done");
 
 // Where every app is right now: one column per stage a change passes through.
 function Board({ rows }) {
   return (
     <ol className="board" aria-label="Where each app is">
       {STAGES.map(([key, title, hint], i) => {
-        const here = rows.filter((r) => r.state.column === key);
+        const here = rows.filter((r) => r.state.column === key && !untracked(r.state));
         return (
           <li key={key} className={`lane ${here.length ? "lane-busy" : ""}`}>
             <div className="lane-head">
@@ -51,7 +53,7 @@ function Board({ rows }) {
 }
 
 function Details({ repo, now }) {
-  const byGate = repo.merged.filter((m) => m.by === GATE).length;
+  const byGate = repo.merged.filter((m) => isAuto(m.by)).length;
   return (
     <div className="app-more">
       <Track steps={repo.track} now={now} />
@@ -62,7 +64,7 @@ function Details({ repo, now }) {
             {repo.updates.map((u) => (
               <li key={u.number}>
                 <Link href={u.url}>{u.title}</Link>
-                {u.waits_for_devin
+                {u.waits_for_you
                   ? <span className="chip chip-critical">waits for you</span>
                   : <span className={`chip ci-${u.ci}`}>CI {CI[u.ci] ?? u.ci}</span>}
               </li>
@@ -131,7 +133,7 @@ function Recent({ repos, now }) {
           <li key={`${m.repo}-${m.number}`}>
             <span className="recent-repo">{m.repo}</span>
             <Link href={m.url}>{m.title}</Link>
-            <span className="muted">{m.by === GATE ? "by the gate" : m.by ? `by ${m.by}` : ""}</span>
+            <span className="muted">{isAuto(m.by) ? "automatically" : m.by ? `by ${m.by}` : ""}</span>
             <span className="muted recent-when">{agoText(now - m.merged_at)}</span>
           </li>
         ))}
@@ -153,8 +155,20 @@ export default function Updates({ updates, now, focus }) {
     if (focus) document.getElementById(`app-${focus}`)?.scrollIntoView({ block: "center" });
   }, [focus, updates?.last_success]);
   if (!updates?.enabled) {
-    return <p className="empty">The Updates view needs a <code>github</code> section in argus.yml and
-      the read-only token on ops-runtime.</p>;
+    return (
+      <section className="updates-head">
+        <h1>See every update on its way.</h1>
+        <p className="lede">
+          Connect GitHub and this page follows each repo's changes: Dependabot's update PRs, CI,
+          the merge, the build and its scan. Argus only reads, and nothing needs to reach it from
+          the internet.
+        </p>
+        <div className="actions"><a className="btn btn-primary" href="#/github">Connect GitHub</a></div>
+      </section>
+    );
+  }
+  if (updates.last_success && !updates.repos.length) {
+    return <p className="empty">Connected, with no repos to show yet. Choose some on the <a href="#/github">GitHub page</a>.</p>;
   }
   if (!updates.last_success) {
     return <p className="muted pad">{updates.last_error ? `GitHub poll failed: ${updates.last_error}` : "Polling GitHub…"}</p>;
@@ -171,9 +185,9 @@ export default function Updates({ updates, now, focus }) {
       <section className="updates-head">
         <h1>{lifecycleHeadline(states)}</h1>
         <p className="lede">
-          Dependabot looks for new versions every Monday (next {dayText(nextWeekday(1, now))}). Each
-          update is tested, merged, built, scanned and deployed on its own; only major versions wait
-          for you. GitHub polled {agoText(now - updates.last_success)}.
+          Dependabot opens a PR for each new version. Each update is tested, merged, built and
+          scanned on its own; only major versions wait for you. GitHub read{" "}
+          {agoText(now - updates.last_success)} · <a href="#/github">GitHub settings</a>.
         </p>
       </section>
       {updates.last_error && (

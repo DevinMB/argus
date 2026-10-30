@@ -112,7 +112,7 @@ describe("life cycle", () => {
     name: "shop", updates: [], merged: [], alerts: [], stack: { host: "box" },
     main: { sha: "abc1234", status: "success", title: "Bump httpx" }, track: DONE, ...extra,
   });
-  const pr = (over) => ({ number: 1, title: "Bump vite", url: "https://x", ci: "running", waits_for_devin: false, ...over });
+  const pr = (over) => ({ number: 1, title: "Bump vite", url: "https://x", ci: "running", waits_for_you: false, ...over });
   const swap = (key, status, detail) => DONE.map((s) => (s.key === key ? step(key, status, detail) : s));
 
   it("is up to date when every step is done, and says what runs where", () => {
@@ -125,11 +125,15 @@ describe("life cycle", () => {
     const lib = lifecycle(repo({ track: DONE.slice(0, 3), stack: null }));
     expect(lib.label).toBe("Up to date");
     expect(lib.sentence).toMatch(/ships inside another app/);
+    // Found by "Connect GitHub": its deploy is unknown, so no claim about it.
+    const found = lifecycle(repo({ track: DONE.slice(0, 3), stack: null, configured: false }));
+    expect(found.sentence).toMatch(/does not follow its deploys/);
+    expect(lifecycle(repo({ main: null, branch: "trunk" })).sentence).toMatch(/No CI runs on trunk/);
   });
   it("puts each open update where it is: testing, merging, or waiting for you", () => {
     expect(lifecycle(repo({ updates: [pr()] }))).toMatchObject({ column: "testing", tone: "accent", you: false });
     expect(lifecycle(repo({ updates: [pr({ ci: "success" })] }))).toMatchObject({ column: "merging", you: false });
-    expect(lifecycle(repo({ updates: [pr({ waits_for_devin: true, ci: "success" })] })))
+    expect(lifecycle(repo({ updates: [pr({ waits_for_you: true, ci: "success" })] })))
       .toMatchObject({ column: "merging", label: "Waits for you", you: true });
     const red = lifecycle(repo({ updates: [pr({ ci: "failure" }), pr({ number: 2, ci: "failure" })] }));
     expect(red).toMatchObject({ column: "testing", tone: "down", you: true });
@@ -143,9 +147,9 @@ describe("life cycle", () => {
     expect(lifecycle(repo({ track: swap("healthy", "failed") }))).toMatchObject({ column: "live", label: "Down", you: true });
   });
   it("a broken step outranks a waiting major, which outranks one in CI", () => {
-    const both = repo({ updates: [pr({ waits_for_devin: true }), pr()], track: swap("bumped", "failed") });
+    const both = repo({ updates: [pr({ waits_for_you: true }), pr()], track: swap("bumped", "failed") });
     expect(lifecycle(both).label).toBe("Deploy stuck");
-    expect(lifecycle(repo({ updates: [pr(), pr({ waits_for_devin: true })] })).label).toBe("Waits for you");
+    expect(lifecycle(repo({ updates: [pr(), pr({ waits_for_you: true })] })).label).toBe("Waits for you");
   });
   it("says when it went live, and flags a failing Dependabot", () => {
     const live = DONE.map((s) => (s.key === "deployed" ? { ...s, at: 123 } : s));
