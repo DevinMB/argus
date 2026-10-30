@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
+import { acrossSites, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -27,7 +27,7 @@ describe("groupChecks", () => {
 describe("ringOrder", () => {
   it("keeps each site in one arc, in the configured order", () => {
     const checks = [c("x", "up", { site: "A" }), c("y", "up"), c("w", "up", { site: "A" })];
-    expect(ringOrder(checks).map((x) => x.name)).toEqual(["y", "w", "x"]);
+    expect(ringOrder(checks, ["B", "A"]).map((x) => x.name)).toEqual(["y", "w", "x"]);
     expect(ringOrder(checks, ["A", "B"]).map((x) => x.name)).toEqual(["w", "x", "y"]);
   });
 });
@@ -98,10 +98,10 @@ describe("headline and siteNote", () => {
 });
 
 describe("siteName", () => {
-  it("uses the configured name, falling back to the letter", () => {
+  it("uses the configured name, falling back to the id", () => {
     expect(siteName({ B: "Home" }, "B")).toBe("Home");
-    expect(siteName({ B: "Home" }, "A")).toBe("Site A");
-    expect(siteName(undefined, "A")).toBe("Site A");
+    expect(siteName({ B: "Home" }, "A")).toBe("A");
+    expect(siteName(undefined, "A")).toBe("A");
   });
 });
 
@@ -202,5 +202,21 @@ describe("jobs", () => {
     expect(jobResult(job, 754 + 3600)).toBe("Passed 1h ago, took 12m: 2 of 3 done, 1 skipped.");
     const bare = { status: "late", max_age: 86400, last: { ...job.last, result: "failed", items: [] } };
     expect(jobResult(bare, 754 + 2 * 86400)).toBe("Failed 2d ago, and is overdue (limit 1d), took 12m: 2 patched.");
+  });
+});
+
+describe("sites", () => {
+  it("names a site by its configured name, else its id", () => {
+    expect(siteName({ home: "Home" }, "home")).toBe("Home");
+    expect(siteName({}, "cabin")).toBe("cabin");
+  });
+  it("says how many sites only when there is more than one", () => {
+    expect(acrossSites(1)).toBe("");
+    expect(acrossSites(2)).toBe(" across both sites");
+    expect(acrossSites(5)).toBe(" across 5 sites");
+  });
+  it("orders any number of sites, unknown ones last", () => {
+    const checks = [c("z", "up", { site: "x" }), c("a", "up", { site: "c" }), c("b", "up", { site: "a" })];
+    expect(ringOrder(checks, ["a", "b", "c"]).map((x) => x.site)).toEqual(["a", "c", "x"]);
   });
 });

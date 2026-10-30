@@ -17,7 +17,7 @@ function Cell({ c, now, sites, onPick }) {
         <span className="chip">{c.kind}</span>
         {c.severity === "critical" && <span className="chip chip-critical">pages</span>}
         {isPublic(c) && <span className="chip chip-public" title="Reached from the internet">public</span>}
-        <span className="chip" title={siteName(sites, c.site)}>site {c.site}</span>
+        {Object.keys(sites ?? {}).length > 1 && <span className="chip">{siteName(sites, c.site)}</span>}
       </div>
       <div className="cell-foot">
         <span>since {ago(now - c.last_change)}</span>

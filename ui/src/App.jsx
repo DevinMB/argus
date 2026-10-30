@@ -8,7 +8,7 @@ import Jobs from "./components/Jobs.jsx";
 import Meter from "./components/Meter.jsx";
 import Ring from "./components/Ring.jsx";
 import Updates from "./components/Updates.jsx";
-import { ago, agoText, byStatus, filterChecks, groupChecks, headline, joinList, lifecycle, siteName, siteNote, summarize } from "./lib.js";
+import { acrossSites, ago, agoText, byStatus, filterChecks, groupChecks, headline, joinList, lifecycle, siteName, siteNote, summarize } from "./lib.js";
 
 const STATUS_FILTERS = [["all", "All"], ["problems", "Problems"], ["up", "Up"]];
 
@@ -78,7 +78,8 @@ export default function App() {
 
   const checks = data?.checks ?? [];
   const sites = data?.info.sites ?? {};
-  const siteOrder = Object.keys(sites).length ? Object.keys(sites) : ["B", "A"];
+  const siteOrder = Object.keys(sites).length ? Object.keys(sites) : [...new Set(checks.map((c) => c.site))];
+  const manySites = siteOrder.length > 1;
   const siteFilters = [["all", "All sites"], ...siteOrder.map((s) => [s, siteName(sites, s)])];
   // Server time, advanced locally between refreshes, so ages use Argus's clock.
   const now = data ? data.info.now + (Date.now() - fetchedAt) / 1000 : Date.now() / 1000;
@@ -145,14 +146,13 @@ export default function App() {
             <div className="hero-side">
               <h1>{headline(sum)}</h1>
               <p className="lede">
-                {checks.length} checks every minute across{" "}
-                {siteOrder.length === 2 ? "both sites" : `${siteOrder.length} sites`}, covering{" "}
+                {checks.length} checks every minute{acrossSites(siteOrder.length)}, covering{" "}
                 {joinList(groupChecks(checks).map(([g]) => data.info.groups?.[g] ?? g))}. Three
                 failures in a row and a check is down; the critical ones page you.
               </p>
               <Asides checks={checks} heartbeats={data.heartbeats} />
               <div className="meters">
-                {siteOrder.map((s) => {
+                {manySites && siteOrder.map((s) => {
                   const ss = siteSum(s);
                   return <Meter key={s} label={siteName(sites, s)} value={ss.up} total={ss.total}
                                 tone={ss.down ? "down" : ss.failing ? "failing" : "up"}
@@ -194,7 +194,7 @@ export default function App() {
 
           <section className="toolbar">
             <Segmented label="Status" value={status} options={STATUS_FILTERS} onChange={setStatus} />
-            <Segmented label="Site" value={site} options={siteFilters} onChange={setSite} />
+            {manySites && <Segmented label="Site" value={site} options={siteFilters} onChange={setSite} />}
             <input className="search" type="search" placeholder="Filter by name, target or tag"
                    value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter checks" />
           </section>

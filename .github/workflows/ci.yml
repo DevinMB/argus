@@ -24,7 +24,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write   # push to GHCR on main
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker build -t argus:ci --build-arg COMMIT=${{ github.sha }} .
@@ -45,17 +44,7 @@ jobs:
           curl -sf localhost:8080/ | grep -q '<title>Argus</title>'
           curl -sfI localhost:8080/ | grep -qi "content-security-policy: default-src 'self'"
           docker logs argus
-      # main only: what passed above is what ops-runtime runs (stack-bump picks
-      # up sha-<7> from this workflow's green runs).
-      - name: Push to GHCR
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IMAGE: ghcr.io/devinmb/argus
-        run: |
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          for t in "sha-${GITHUB_SHA::7}" main; do docker tag argus:ci "$IMAGE:$t"; docker push -q "$IMAGE:$t"; done
-          echo "### Pushed $IMAGE:sha-${GITHUB_SHA::7}" >> "$GITHUB_STEP_SUMMARY"
+      # No image push yet: v2 publishes to GHCR at launch (milestone M6).
 
   gate:
     needs: [test, image]

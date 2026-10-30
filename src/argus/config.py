@@ -11,7 +11,7 @@ import hashlib
 import ipaddress
 import socket
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
@@ -20,7 +20,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 NAME = r"^[a-z0-9][a-z0-9-]{0,62}$"
 REPO = r"^[A-Za-z0-9._-]{1,100}$"
 Severity = Literal["critical", "warning"]
-Site = Literal["A", "B"]
+# A site is a name and an order: one per network or place ("home", "office").
+SITE = r"^[A-Za-z0-9][A-Za-z0-9-]{0,31}$"
+# Empty means the first site in `sites` (Config fills it in).
+Site = Annotated[str, Field(pattern=r"^$|" + SITE)]
+SiteId = Annotated[str, Field(pattern=SITE)]
+SiteName = Annotated[str, Field(min_length=1, max_length=64)]
 
 
 class Check(BaseModel):
@@ -30,7 +35,7 @@ class Check(BaseModel):
     kind: Literal["http", "tcp", "ping"]
     target: str
     group: str = "default"
-    site: Site
+    site: Site = ""
     severity: Severity = "warning"
     interval: int = Field(60, ge=10, le=3600)
     timeout: float = Field(5, gt=0, le=60)
@@ -69,7 +74,7 @@ class Heartbeat(BaseModel):
     name: str = Field(pattern=NAME)
     max_age: int = Field(ge=60, description="seconds without a beat before it counts as late")
     group: str = "default"
-    site: Site
+    site: Site = ""
     severity: Severity = "warning"
     description: str = ""
 
@@ -88,7 +93,7 @@ class Job(BaseModel):
     # When it runs, for people (the timer is the source of truth), e.g. "Mondays 03:00".
     schedule: str = ""
     group: str = "default"
-    site: Site
+    site: Site = ""
     severity: Severity = "warning"
     description: str = ""
     # For people who do not know the setup: what it covers, in a few words
@@ -144,8 +149,9 @@ class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Display names for the sites, in display order. Names live in the config,
-    # never in the code.
-    sites: dict[Site, str] = {"A": "Site A", "B": "Site B"}
+    # never in the code. Left out, the sites are the ones the entries name, in
+    # order of first use, each called by its id ("home" when none names one).
+    sites: dict[SiteId, SiteName] = {}
     # Footer links in the UI (dashboards, alert pages), grouped by `group`.
     links: tuple[Link, ...] = ()
     # Hosts no check may touch, by IP: someone else's machines on a shared
@@ -163,8 +169,33 @@ class Config(BaseModel):
     github: GitHub | None = None
     repos: tuple[Repo, ...] = ()
 
+    @model_validator(mode="before")
+    @classmethod
+    def _sites(cls, data: Any) -> Any:
+        """Give every entry a site, so one-site setups never mention sites at all."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        kinds = ("checks", "heartbeats", "jobs")
+        if not data.get("sites"):
+            used = [e.get("site") or "home" for k in kinds for e in data.get(k) or ()
+                    if isinstance(e, dict)]
+            data["sites"] = {s: s for s in dict.fromkeys(used or ["home"])}
+        if not isinstance(data["sites"], dict):
+            return data
+        first = next(iter(data["sites"]))
+        for k in kinds:
+            if isinstance(data.get(k), list):
+                data[k] = [{**e, "site": e.get("site") or first} if isinstance(e, dict) else e
+                           for e in data[k]]
+        return data
+
     @model_validator(mode="after")
     def _rules(self) -> Config:
+        for e in (*self.checks, *self.heartbeats, *self.jobs):
+            if e.site not in self.sites:
+                known = ", ".join(self.sites)
+                raise ValueError(f"{e.name}: unknown site {e.site} (sites: {known})")
         names = ([c.name for c in self.checks] + [h.name for h in self.heartbeats]
                  + [j.name for j in self.jobs])
         dupes = sorted({n for n in names if names.count(n) > 1})

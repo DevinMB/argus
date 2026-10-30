@@ -51,7 +51,7 @@ export default function CheckDrawer({ name, now, sites, onClose }) {
             <dl className="facts">
               <dt>Target</dt><dd className="mono">{check.target}</dd>
               <dt>Kind</dt><dd>{check.kind}{check.kind === "http" && ` · expects ${check.expect_status.join("/")}${check.verify_tls ? "" : " · TLS not verified"}`}</dd>
-              <dt>Site</dt><dd>{check.site} · {siteName(sites, check.site)}</dd>
+              <dt>Site</dt><dd>{siteName(sites, check.site)}</dd>
               <dt>Group</dt><dd>{check.group}</dd>
               <dt>Severity</dt><dd>{check.severity === "critical" ? "critical (pages)" : "warning (boards only)"}</dd>
               <dt>Every</dt><dd>{check.interval} s, timeout {check.timeout} s</dd>

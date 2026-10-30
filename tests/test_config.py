@@ -33,7 +33,7 @@ def test_empty_file_is_an_empty_config(tmp_path):
     ({"name": "x", "kind": "tcp", "target": "h", "site": "B"}, "host:port"),
     ({"name": "x", "kind": "tcp", "target": "h:70000", "site": "B"}, "host:port"),
     ({"name": "x", "kind": "ping", "target": "h:22", "site": "B"}, "bare host"),
-    ({"name": "x", "kind": "ping", "target": "h", "site": "C"}, "site"),
+    ({"name": "x", "kind": "ping", "target": "h", "site": "-c"}, "site"),
     ({"name": "x", "kind": "ping", "target": "h", "site": "B", "timeout": 60, "interval": 30},
      "shorter than interval"),
 ])
@@ -84,4 +84,26 @@ def test_sites_and_links():
     with pytest.raises(ValidationError, match="url must be http"):
         Config.model_validate({"links": [{"label": "x", "url": "ftp://192.0.2.1/"}]})
     with pytest.raises(ValidationError):
-        Config.model_validate({"sites": {"C": "Elsewhere"}})
+        Config.model_validate({"sites": {"a b": "Elsewhere"}})
+
+
+def test_any_number_of_sites():
+    ping = lambda n, **kw: {"name": n, "kind": "ping", "target": "h", **kw}  # noqa: E731
+    cfg = Config.model_validate({
+        "sites": {"home": "Home", "office": "Office", "cabin": "Cabin", "dc-1": "Rack"},
+        "checks": [ping("a"), ping("b", site="cabin"), ping("c", site="dc-1")],
+        "heartbeats": [{"name": "d", "max_age": 60, "site": "office"}],
+    })
+    assert [c.site for c in cfg.checks] == ["home", "cabin", "dc-1"]
+    assert cfg.heartbeats[0].site == "office"
+    with pytest.raises(ValidationError, match="unknown site attic"):
+        Config.model_validate({"sites": {"home": "Home"}, "checks": [ping("a", site="attic")]})
+
+
+def test_sites_default_to_the_ones_used():
+    ping = lambda n, **kw: {"name": n, "kind": "ping", "target": "h", **kw}  # noqa: E731
+    assert Config.model_validate({}).sites == {"home": "home"}
+    one = Config.model_validate({"checks": [ping("a"), ping("b")]})
+    assert one.sites == {"home": "home"} and {c.site for c in one.checks} == {"home"}
+    two = Config.model_validate({"checks": [ping("a", site="B"), ping("b", site="A"), ping("c")]})
+    assert list(two.sites) == ["B", "A", "home"]

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getJob } from "../api.js";
-import { JOB_TONE, jobResult, nextRun, scheduleDay, stamp, took } from "../lib.js";
+import { JOB_TONE, jobResult, nextRun, scheduleDay, siteName, stamp, took } from "../lib.js";
 
 const STATUS = { ok: "OK", failed: "Failed", late: "Overdue", never: "Not run yet" };
 const WEEK = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
@@ -106,7 +106,7 @@ function JobCard({ job, now, sites, open, onToggle }) {
       )}
       <footer className="jcard-foot">
         <span>{next ? `Next: ${next}` : job.schedule}</span>
-        <span>{sites?.[job.site] ?? `Site ${job.site}`}</span>
+        {Object.keys(sites ?? {}).length > 1 && <span>{siteName(sites, job.site)}</span>}
         {job.severity === "critical" && <span className="crow-pages" title="A failed or overdue run sends a page">pages on failure</span>}
         <span className="mono-name">{job.name}</span>
         <button className="link-button" aria-expanded={open} onClick={onToggle}>

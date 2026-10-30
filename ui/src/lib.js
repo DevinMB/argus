@@ -5,7 +5,12 @@ const RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
 
 // Site display names come from argus.yml (via /api/info), never from the code.
 export function siteName(sites, s) {
-  return sites?.[s] ?? `Site ${s}`;
+  return sites?.[s] ?? s;
+}
+
+// "across both sites", "across 4 sites"; nothing when there is only one.
+export function acrossSites(n) {
+  return n < 2 ? "" : n === 2 ? " across both sites" : ` across ${n} sites`;
 }
 
 export function summarize(checks) {
@@ -32,13 +37,13 @@ export function groupChecks(checks) {
 
 // The ring: sites in their configured order, each by group (config order) and
 // name, so each site is one unbroken arc and a tick never moves between refreshes.
-export function ringOrder(checks, siteOrder = ["B", "A"]) {
+export function ringOrder(checks, siteOrder = []) {
   const siteRank = Object.fromEntries(siteOrder.map((s, i) => [s, i]));
   const groupRank = new Map();
   for (const c of checks) if (!groupRank.has(c.group)) groupRank.set(c.group, groupRank.size);
   return [...checks].sort(
     (a, b) =>
-      (siteRank[a.site] ?? 2) - (siteRank[b.site] ?? 2) ||
+      (siteRank[a.site] ?? siteOrder.length) - (siteRank[b.site] ?? siteOrder.length) ||
       groupRank.get(a.group) - groupRank.get(b.group) ||
       a.name.localeCompare(b.name),
   );

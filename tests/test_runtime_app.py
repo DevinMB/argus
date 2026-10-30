@@ -154,7 +154,7 @@ def test_security_headers_on_every_response(client):
 def test_info_reports_server_time(client, clock):
     info = client.get("/api/info").json()
     assert info["now"] == clock.now and info["groups"] == {}
-    assert info["sites"] == {"A": "Site A", "B": "Site B"} and info["links"] == []
+    assert info["sites"] == {"B": "B", "A": "A"} and info["links"] == []
 
 
 def test_serves_the_ui_when_built(tmp_path, monkeypatch, rt):
