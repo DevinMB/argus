@@ -46,6 +46,7 @@ One repo says what each host runs: `hosts/<host>` lists stack folders (one per l
 - Hosts enrolled **monitoring only** never deploy.
 - Stacks live in `/var/lib/argus-companion/stacks/<name>`; data a stack keeps in its folder (`./data`) is never touched by a deploy.
 - Without GitHub, `ARGUS_DEPLOY_DIR` points Argus at a folder with the same layout.
+- **Tag bumps:** when a repo's main build is green, Argus rewrites `ghcr.io/<owner>/<repo>[-part]:sha-<commit>` in the deploy repo in one fast-forward commit, and the hosts deploy it. This needs a fine-grained token for the deploy repo alone (Contents: read and write); the GitHub App stays read-only. Updates then follows each change to "deployed" from the companions' own reports.
 
 ## Develop
 

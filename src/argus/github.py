@@ -359,6 +359,44 @@ async def run_forever(poller: Poller, config: Callable[[], Any],
         await asyncio.sleep(wait)
 
 
+def _placed(add, placed: list[dict], main: dict | None, built: str, now: float,
+            repo_name: str, can_bump: bool) -> bool:
+    """Bumped and deployed steps from the deploy repo and companions' reports."""
+    if built != "success":
+        add("bumped", "pending", "Waits for a green build on main")
+        add("deployed", "pending", "Waits for the tag bump")
+        return False
+    sha = main["sha"]
+    behind = [p["path"] for p in placed if sha not in p["shas"]]
+    if not behind:
+        add("bumped", "done", f"sha-{sha} in {repo_name}")
+    elif not can_bump:
+        add("bumped", "not_wired", "No write token for the deploy repo, so Argus does not bump "
+            "tags; add one on the GitHub page")
+    elif now - main["updated_at"] < BUMP_GRACE:
+        add("bumped", "running", "Argus bumps the tag within a minute")
+    else:
+        add("bumped", "failed", f"{', '.join(behind)} still on an older sha 30 minutes after "
+            "the build; the GitHub page says why")
+    if behind:
+        add("deployed", "pending", "Waits for the tag bump")
+        return False
+    hosts = [(h, st) for p in placed for h, st in p["status"].items()]
+    if not hosts:
+        add("deployed", "not_wired", "No hosts/ file in the deploy repo lists its stack")
+        return False
+    bad = [h for h, st in hosts if st in ("failed", "refused", "rolled_back")]
+    waiting = [h for h, st in hosts if st not in ("deployed", "read_only")]
+    if bad:
+        add("deployed", "failed", f"Deploy failed on {', '.join(bad)}; see Hosts")
+        return False
+    if waiting:
+        add("deployed", "running", f"Deploying on {', '.join(waiting)}")
+        return False
+    add("deployed", "done", f"On {', '.join(h for h, _ in hosts)} by its companion")
+    return True
+
+
 TITLES = {"updates": "Update PRs", "merged": "Merged to main", "built": "Built and scanned",
           "bumped": "Tag bumped", "deployed": "Deployed", "healthy": "Healthy"}
 
@@ -371,13 +409,16 @@ def _who(main: dict) -> str:
 
 
 def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
-          stacks_repo: str = "homelab-stacks", deploy: str = "") -> list[dict]:
+          stacks_repo: str = "homelab-stacks", deploy: str = "",
+          placed: list[dict] | None = None, can_bump: bool = True) -> list[dict]:
     """The steps a change takes from update PR to healthy, for the newest change on main.
 
     Statuses: done, running, waiting (for the owner), failed, pending (an earlier
     step has not finished), not_wired (that part of the pipeline does not exist yet).
     A repo deployed by its own timer (`deploy`, a heartbeat) has no tag bump; one
     deployed by nothing (a library shipped inside another app) ends at the build.
+    `placed` is v2's way: the deploy repo's stacks that run the repo's images,
+    each with its hosts and how each host's companion deployed it.
     """
     steps = []
 
@@ -445,6 +486,8 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
                 f"journalctl -u {deploy} says when sha-{main['sha']} goes out")
         else:
             add("deployed", "not_wired", f"{deploy} does not report which version it runs")
+    elif stack is None and placed:
+        deployed = _placed(add, placed, main, built, now, stacks_repo, can_bump)
     elif stack is None:
         pass
     else:
@@ -479,11 +522,11 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
         else:
             add("deployed", "running", f"stack-sync on {host} runs every 5 minutes")
 
-    if check is None and stack is None and not deploy:
+    if check is None and stack is None and not deploy and not placed:
         pass
     elif check is None:
         add("healthy", "not_wired", "No check linked in argus.yml")
-    elif (stack is not None or deploy) and not deployed:
+    elif (stack is not None or deploy or placed) and not deployed:
         add("healthy", "pending", f"{check['name']} is {check['status']} on the previous deploy")
     elif check["status"] == "up":
         add("healthy", "done", f"{check['name']} is up, with no failure since",

@@ -43,7 +43,7 @@ from argus.alerts import (
 )
 from argus.auth import COOKIE, SESSION_DAYS, Auth, AuthError, Session
 from argus.companions import REPORT_EVERY, EnrollError, Signer
-from argus.deploys import BRANCH, ENV_KEY, PULL_TOKEN, STACK, Deploys
+from argus.deploys import BRANCH, ENV_KEY, PULL_TOKEN, STACK, WRITE_TOKEN, Deploys
 from argus.metrics import registry
 from argus.probes import Result
 from argus.runtime import Runtime
@@ -234,6 +234,8 @@ class DeploySettings(BaseModel):
     branch: str | None = Field(None, max_length=100, pattern=r"^$|^[A-Za-z0-9._/-]+$")
     pull_token: str | None = Field(None, max_length=255,
                                    pattern=r"^$|^(ghp_|github_pat_)[A-Za-z0-9_]{20,250}$")
+    write_token: str | None = Field(None, max_length=255,
+                                    pattern=r"^$|^github_pat_[A-Za-z0-9_]{20,250}$")
 
 
 class StackSecrets(BaseModel):
@@ -593,7 +595,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         return {"source": src.describe() if src else None,
                 "repo": s.get("deploy.repo", ""), "branch": s.get(BRANCH, ""),
                 "commit": d.snapshot and d.snapshot.commit, "read_at": d.read_at,
-                "error": d.error, "pull_token_set": s.has_secret(PULL_TOKEN),
+                "error": d.error or d.bump_error, "pull_token_set": s.has_secret(PULL_TOKEN),
+                "write_token_set": s.has_secret(WRITE_TOKEN),
                 "hosts": d.snapshot.hosts if d.snapshot else {},
                 "connected": request.app.state.gh.connected}
 
@@ -610,6 +613,20 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             s.set(BRANCH, body.branch)
         if body.pull_token is not None:
             s.set_secret(PULL_TOKEN, body.pull_token or None)
+        if body.write_token:
+            # It must be able to push to the deploy repo, and is kept only if so.
+            repo = s.get("deploy.repo")
+            if not repo:
+                raise HTTPException(409, "choose the deploy repo first")
+            r = await request.app.state.gh.client.get(
+                f"/repos/{repo}", headers={"Authorization": f"Bearer {body.write_token}"},
+                auth=None)  # this token, not the read connection's
+            if r.status_code != 200 or not r.json().get("permissions", {}).get("push"):
+                raise HTTPException(400, f"that token cannot push to {repo}; give it "
+                                         "Contents: read and write on that repo only")
+            s.set_secret(WRITE_TOKEN, body.write_token)
+        elif body.write_token == "":
+            s.set_secret(WRITE_TOKEN, None)
         await request.app.state.deploys.refresh()
         return deploy_view(request)
 
@@ -762,14 +779,25 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         checks = {c.name: c for c in r.config.checks}
         beats = {h["name"]: h for h in r.heartbeat_views()}
         stacks = r.config.github.stacks_repo if r.config.github else "the deploy repo"
+        d, s = request.app.state.deploys, request.app.state.settings
+        # (host, stack path) -> how that host's companion deployed it
+        status = {(v["companion"], st["path"]): st["status"]
+                  for v in d.views(r.companions.views()) for st in v["stacks"]}
         out = []
         for t in gh.targets:
             state = gh.repos.get(t.name)
             if state is None:
                 continue
+            placed = None
+            if not t.repo.stack and not t.repo.deploy:
+                placed = [{**p, "status": {h: status.get((h, p["path"]), "pending")
+                                           for h in p["hosts"]}}
+                          for p in d.placements(t.owner, t.repo.name)] or None
             c = checks.get(t.repo.check)
             out.append({**state, "track": github.track(
-                state, c and check_view(r, c), beats, r.clock(), stacks, t.repo.deploy)})
+                state, c and check_view(r, c), beats, r.clock(),
+                s.get("deploy.repo") or stacks, t.repo.deploy, placed,
+                can_bump=s.has_secret(WRITE_TOKEN))})
         return out
 
     @app.get("/api/checks/{name}")
