@@ -198,7 +198,7 @@ class RemoteResult(BaseModel):
 
 class Report(BaseModel):
     nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{16,64}$")
-    version: str = Field("", max_length=40)
+    version: str = Field("", max_length=100)
     hostname: str = Field("", max_length=253)
     os: str = Field("", max_length=120)
     kernel: str = Field("", max_length=120)

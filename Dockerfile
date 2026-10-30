@@ -15,7 +15,7 @@ ARG COMMIT=unknown
 RUN test -z "$(gofmt -l .)" && go vet ./... && CGO_ENABLED=0 go test ./... \
  && for arch in amd64 arm64; do \
       CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
-        -ldflags "-s -w -X main.version=2.0.0-dev+${COMMIT}" -o /out/argus-companion-linux-$arch . ; \
+        -ldflags "-s -w -X main.version=2.0.0-dev+$(echo $COMMIT | cut -c1-12)" -o /out/argus-companion-linux-$arch . ; \
     done
 
 FROM python:3.14.7-slim-trixie

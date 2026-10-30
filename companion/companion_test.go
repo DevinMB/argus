@@ -265,3 +265,11 @@ func TestCheckerQueuesResultsForTheReport(t *testing.T) {
 	}
 	t.Fatal("no result within 5 s")
 }
+
+func TestValidationErrorsAreReadable(t *testing.T) {
+	var d any
+	_ = json.Unmarshal([]byte(`[{"loc":["body","version"],"msg":"String should have at most 100 characters"}]`), &d)
+	if got := detailText(d); got != `["body","version"]: String should have at most 100 characters` {
+		t.Fatal(got)
+	}
+}

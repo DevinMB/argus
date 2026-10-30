@@ -126,10 +126,27 @@ func post(client *http.Client, url, token string, body any) ([]byte, http.Header
 			Detail any `json:"detail"`
 		}
 		_ = json.Unmarshal(out, &e)
-		detail, _ := e.Detail.(string)
+		detail := detailText(e.Detail)
 		return nil, nil, &HTTPError{resp.StatusCode, detail}
 	}
 	return out, resp.Header, nil
+}
+
+// detailText reads FastAPI's detail: a string, or a list of validation errors.
+func detailText(d any) string {
+	switch v := d.(type) {
+	case string:
+		return v
+	case []any:
+		var parts []string
+		for _, item := range v {
+			m, _ := item.(map[string]any)
+			loc, _ := json.Marshal(m["loc"])
+			parts = append(parts, fmt.Sprintf("%s: %v", loc, m["msg"]))
+		}
+		return strings.Join(parts, "; ")
+	}
+	return ""
 }
 
 // enroll trades a single-use code for this host's token and Argus's signing key.

@@ -99,6 +99,7 @@ def test_a_code_enrolls_once_then_reports_are_signed(client, csrf, rt, clock):
     assert me["token"] not in json.dumps(dict(row))
 
     r, nonce = report(client, me["token"], os="Debian GNU/Linux 13 (trixie)",
+                      version="2.0.0-dev+" + "e81b905642f66c3efe2a25a2f11a61b91ea27000",
                       disks=[{"mount": "/", "total": 100, "used": 40}],
                       containers=[{"name": "web", "state": "running", "health": "healthy"}],
                       checks=[{"name": "nas-web", "ok": False, "duration": 0.2,
