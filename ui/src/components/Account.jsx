@@ -49,6 +49,11 @@ export default function Account({ session, onSession }) {
         </label>
       </div>
 
+      <div className="panel">
+        <h2 className="eyebrow">Settings</h2>
+        <p><a href="#/config">Config</a>: where argus.yml lives, the whole file, export. · <a href="#/github">GitHub</a>: repos, deploys, tokens.</p>
+      </div>
+
       <form className="panel" onSubmit={change}>
         <h2 className="eyebrow">Change password</h2>
         <input type="text" name="username" value="admin" autoComplete="username" readOnly hidden />

@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from argus import ghauth, github
+from argus import configsrc, ghauth, github
 from argus.alerts import (
     ALERTMANAGER_EXAMPLE,
     TOKEN,
@@ -238,6 +238,31 @@ class DeploySettings(BaseModel):
                                     pattern=r"^$|^github_pat_[A-Za-z0-9_]{20,250}$")
 
 
+class ConfigSourceChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: Literal["argus", "github", "file"]
+    repo: str = Field("", pattern=r"^$|^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
+    path: str = Field("argus.yml", max_length=300, pattern=r"^[A-Za-z0-9._/-]+\.ya?ml$")
+    branch: str = Field("", max_length=100, pattern=r"^$|^[A-Za-z0-9._/-]+$")
+    mode: Literal["commit", "pr"] = "commit"
+
+
+class ConfigText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=512 * 1024)
+    base: str = Field(max_length=64)
+
+
+class ConfigEntry(BaseModel):
+    """One check, heartbeat or job, added or replacing the one named `replace`."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["checks", "heartbeats", "jobs"] = "checks"
+    entry: dict = Field(max_length=40)
+    replace: str | None = Field(None, max_length=64)
+    base: str = Field(max_length=64)
+
+
 class StackSecrets(BaseModel):
     """Changes to one stack's .env: a value sets a key, null removes it."""
 
@@ -322,12 +347,14 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         folder = os.environ.get("ARGUS_DEPLOY_DIR")
         deploys = Deploys(settings, gh, rt.clock, Path(folder) if folder else None)
         app.state.deploys = alerter.deploys = deploys
+        app.state.configsrc = configsrc.ConfigSource(rt, settings, gh, rt.clock)
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
         tasks = []
         if start_scheduler:
             tasks.append(asyncio.create_task(rt.run_forever()))
             tasks.append(asyncio.create_task(alerter.run_forever()))
             tasks.append(asyncio.create_task(deploys.run_forever()))
+            tasks.append(asyncio.create_task(app.state.configsrc.run_forever()))
             tasks.append(asyncio.create_task(github.run_forever(
                 gh, lambda: rt.config, lambda: set(settings.get(ghauth.HIDDEN, [])))))
         yield
@@ -586,6 +613,95 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         # back to /#/github (the app's setup URL).
         return Response(status_code=303,
                         headers={"Location": f"{app_['html_url']}/installations/new"})
+
+    # --- config: where it lives, and edits from the UI ---
+
+    def edit_call(fn):
+        async def run(*args):
+            try:
+                return await fn(*args)
+            except configsrc.EditError as e:
+                raise HTTPException(e.status, str(e)) from None
+            except httpx.HTTPError as e:
+                raise HTTPException(502, f"GitHub said no: {type(e).__name__}") from None
+        return run
+
+    @app.get("/api/config")
+    async def config_view(request: Request, _: Admin) -> dict:
+        return request.app.state.configsrc.view()
+
+    @app.get("/api/config/export.yml")
+    async def config_export(request: Request, _: Admin) -> Response:
+        return Response(request.app.state.configsrc.text(), media_type="application/yaml",
+                        headers={"Content-Disposition": 'attachment; filename="argus.yml"'})
+
+    @app.put("/api/config")
+    async def config_save(body: ConfigText, request: Request, _: Admin) -> dict:
+        src = request.app.state.configsrc
+        out = await edit_call(src.save)(body.text, body.base, "edited as YAML")
+        return {**src.view(), **out}
+
+    @app.post("/api/config/entries")
+    async def config_entry(body: ConfigEntry, request: Request, _: Admin) -> dict:
+        src = request.app.state.configsrc
+        name = body.entry.get("name", "")
+        try:
+            text = configsrc.upsert(src.text(), body.kind, body.entry, body.replace)
+        except configsrc.EditError as e:
+            raise HTTPException(e.status, str(e)) from None
+        except ValidationError as e:
+            raise HTTPException(422, e.errors(include_url=False, include_context=False)) from None
+        why = f"{'change' if body.replace else 'add'} {body.kind[:-1]} {name}"
+        out = await edit_call(src.save)(text, body.base, why)
+        return {**src.view(), **out}
+
+    @app.delete("/api/config/entries/{kind}/{name}")
+    async def config_remove(kind: Literal["checks", "heartbeats", "jobs"], name: str,
+                            base: str, request: Request, _: Admin) -> dict:
+        src = request.app.state.configsrc
+        try:
+            text = configsrc.remove(src.text(), kind, name)
+        except configsrc.EditError as e:
+            raise HTTPException(e.status, str(e)) from None
+        out = await edit_call(src.save)(text, base, f"remove {kind[:-1]} {name}")
+        return {**src.view(), **out}
+
+    @app.put("/api/config/source")
+    async def config_source(body: ConfigSourceChange, request: Request, _: Admin) -> dict:
+        src, s, r = request.app.state.configsrc, request.app.state.settings, rt(request)
+        current = src.text()
+        if body.source == "file":
+            if not r.config_path.exists():
+                raise HTTPException(409, f"there is no file at {r.config_path}")
+            s.set(configsrc.SOURCE, "file")
+            r.watch_file, r.config_mtime = True, None
+            r.maybe_reload()
+        elif body.source == "argus":
+            s.set(configsrc.TEXT, current or configsrc.STARTER)
+            s.set(configsrc.SOURCE, "argus")
+            r.apply_text(current or configsrc.STARTER)
+        else:
+            if not body.repo:
+                raise HTTPException(422, "choose the repo")
+            old = {k: s.get(k) for k in (configsrc.SOURCE, configsrc.REPO, configsrc.PATH,
+                                         configsrc.BRANCH, configsrc.MODE)}
+            for k, v in ((configsrc.REPO, body.repo), (configsrc.PATH, body.path),
+                         (configsrc.BRANCH, body.branch), (configsrc.MODE, body.mode)):
+                s.set(k, v)
+            try:
+                got = await edit_call(src._fetch)()
+                if got is None:  # not in the repo yet: put the current config there
+                    src.sha = None
+                    await edit_call(src._commit)(current or configsrc.STARTER,
+                                                 "start Argus's config here")
+                s.set(configsrc.SOURCE, "github")
+                src.sha = None
+                await src.refresh()
+            except HTTPException:
+                for k, v in old.items():
+                    s.set(k, v)
+                raise
+        return src.view()
 
     # --- deploys ---
 
