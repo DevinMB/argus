@@ -1,0 +1,316 @@
+// Pure helpers for the Argus UI. No DOM, so they are unit-tested (lib.test.js).
+
+export const STATUSES = ["down", "failing", "unknown", "up"];
+const RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
+
+// Site display names come from argus.yml (via /api/info), never from the code.
+export function siteName(sites, s) {
+  return sites?.[s] ?? s;
+}
+
+// "across both sites", "across 4 sites"; nothing when there is only one.
+export function acrossSites(n) {
+  return n < 2 ? "" : n === 2 ? " across both sites" : ` across ${n} sites`;
+}
+
+export function summarize(checks) {
+  const out = { total: checks.length, up: 0, failing: 0, down: 0, unknown: 0 };
+  for (const c of checks) out[c.status in out ? c.status : "unknown"] += 1;
+  return out;
+}
+
+// Worst first, then by name: what needs attention is always at the top.
+export function byStatus(a, b) {
+  return (RANK[a.status] ?? 2) - (RANK[b.status] ?? 2) || a.name.localeCompare(b.name);
+}
+
+// Groups in the order argus.yml lists them (the API keeps it); checks inside
+// worst first.
+export function groupChecks(checks) {
+  const groups = new Map();
+  for (const c of checks) {
+    if (!groups.has(c.group)) groups.set(c.group, []);
+    groups.get(c.group).push(c);
+  }
+  return [...groups.entries()].map(([group, list]) => [group, [...list].sort(byStatus)]);
+}
+
+// The ring: sites in their configured order, each by group (config order) and
+// name, so each site is one unbroken arc and a tick never moves between refreshes.
+export function ringOrder(checks, siteOrder = []) {
+  const siteRank = Object.fromEntries(siteOrder.map((s, i) => [s, i]));
+  const groupRank = new Map();
+  for (const c of checks) if (!groupRank.has(c.group)) groupRank.set(c.group, groupRank.size);
+  return [...checks].sort(
+    (a, b) =>
+      (siteRank[a.site] ?? siteOrder.length) - (siteRank[b.site] ?? siteOrder.length) ||
+      groupRank.get(a.group) - groupRank.get(b.group) ||
+      a.name.localeCompare(b.name),
+  );
+}
+
+// Exposure is a tag, not a group: a target on a domain name is reached from
+// the internet (through a Cloudflare tunnel); LAN services are addressed by IP.
+export function isPublic(check) {
+  if (check.kind !== "http") return false;
+  try {
+    const host = new URL(check.target).hostname;
+    return !/^[\d.]+$/.test(host) && !host.includes(":") && host.includes(".");
+  } catch {
+    return false;
+  }
+}
+
+// Everything a tile shows, as one lowercase string to search: name, target,
+// group and each tag (kind, "pages", "public", "site B" and the site's name).
+export function searchText(check, sites) {
+  return [
+    check.name, check.target, check.group, check.kind, check.severity,
+    check.severity === "critical" && "pages",
+    isPublic(check) && "public",
+    `site ${check.site}`, siteName(sites, check.site),
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+export function filterChecks(checks, { status = "all", site = "all", q = "", sites } = {}) {
+  const needle = q.trim().toLowerCase();
+  return checks.filter(
+    (c) =>
+      (status === "all" ||
+        (status === "problems" ? c.status === "down" || c.status === "failing" : c.status === status)) &&
+      (site === "all" || c.site === site) &&
+      (!needle || searchText(c, sites).includes(needle)),
+  );
+}
+
+// "12s", "4m", "3h", "2d". Null-safe; negative clock skew reads as "now".
+export function ago(seconds) {
+  if (seconds == null || Number.isNaN(seconds)) return "never";
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 5) return "now";
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+// "a", "a and b", "a, b and c".
+export function joinList(items) {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+// "just now" / "4m ago", for sentences.
+export function agoText(seconds) {
+  const a = ago(seconds);
+  return a === "now" ? "just now" : a === "never" ? "never" : `${a} ago`;
+}
+
+export function ms(seconds) {
+  if (seconds == null) return "–";
+  return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(1)} s`;
+}
+
+export function stamp(ts) {
+  if (!ts) return "–";
+  return new Date(ts * 1000).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+// Never claim "all up" while checks are still waiting for a first result.
+export function headline(s) {
+  if (s.down) return "Something is down.";
+  if (s.failing) return "Something is wobbling.";
+  if (s.unknown) return "Starting up.";
+  return "All quiet.";
+}
+
+export function siteNote(s) {
+  if (s.down) return `${s.down} down`;
+  if (s.failing) return `${s.failing} failing`;
+  if (s.unknown) return `${s.unknown} waiting`;
+  return "all up";
+}
+
+// ---- the app pipeline (Updates view, tracks) ----
+
+export const GATE = "github-actions[bot]"; // the Dependabot merge gate merges as this
+// Links in API data are drawn only when they point at the web over https.
+export function safeHref(url) {
+  return typeof url === "string" && /^https:\/\//.test(url) ? url : undefined;
+}
+
+// Jobs (decision 0017): runs that systemd starts and that report back here.
+export const JOB_TONE = { ok: "up", failed: "down", late: "down", never: "failing" };
+
+// "12m", "1h 4m": how long a run took.
+export function took(started, finished) {
+  if (started == null || finished == null) return "–";
+  const s = Math.max(0, Math.round(finished - started));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+// What a job's cell says under its name.
+export function jobLine(job, now) {
+  if (!job.last) return job.schedule ? `first run ${job.schedule}` : "no run reported yet";
+  const when = agoText(now - job.last.finished);
+  if (job.status === "late") return `last ran ${when}, past its ${ago(job.max_age)} limit`;
+  return `${job.last.result === "ok" ? "passed" : "failed"} ${when}`;
+}
+
+// ---- life cycle: where each app is, in words (Updates view) ----
+
+// The board's columns, in the order a change travels.
+export const STAGES = [
+  ["testing", "Testing", "An update PR is open and CI is checking it"],
+  ["merging", "Merging", "Green PRs merge themselves; majors wait for you"],
+  ["building", "Building", "main builds an image and Trivy scans it"],
+  ["deploying", "Deploying", "The new tag goes out to its host"],
+  ["live", "Live", "Running the newest change"],
+];
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+// One app's place in the life cycle: the column it sits in, a tone, a short
+// label and one sentence. What needs a person outranks what is moving, which
+// outranks "up to date". `you` marks the ones that need Devin.
+export function lifecycle(repo) {
+  const steps = repo.track ?? [];
+  const step = (k) => steps.find((s) => s.key === k);
+  const ups = repo.updates ?? [];
+  const red = ups.filter((u) => !u.waits_for_devin && u.ci === "failure");
+  const major = ups.filter((u) => u.waits_for_devin);
+  const green = ups.filter((u) => !u.waits_for_devin && u.ci === "success");
+  const testing = ups.filter((u) => !u.waits_for_devin && (u.ci === "running" || u.ci === "none"));
+  const more = (list) => (list.length > 1 ? ` (and ${list.length - 1} more)` : "");
+  const deployedAt = steps.find((s) => s.key === "deployed" && s.status === "done")?.at ?? null;
+  const out = (column, tone, label, sentence, url, you = false) =>
+    ({ column, tone, label, sentence, url, you, deployedAt });
+
+  const broken = steps.find((s) => s.status === "failed" && s.key !== "updates");
+  if (broken) {
+    const [column, label] = {
+      built: ["building", "Build failed"],
+      bumped: ["deploying", "Deploy stuck"],
+      deployed: ["deploying", "Deploy failed"],
+      healthy: ["live", "Down"],
+    }[broken.key] ?? ["live", broken.title];
+    return out(column, "down", label, broken.detail, broken.url, true);
+  }
+  const updates = step("updates");
+  if (updates?.status === "failed" && !red.length) {
+    return out("testing", "down", "Dependabot failing",
+      `${updates.detail}. New versions are not being proposed until it is fixed.`, updates.url, true);
+  }
+  if (red.length) {
+    return out("testing", "down", "Update failing CI",
+      `${red[0].title} failed its checks, so it will not merge on its own${more(red)}.`, red[0].url, true);
+  }
+  if (major.length) {
+    return out("merging", "failing", "Waits for you",
+      `${major[0].title} is a major version: review it and merge${more(major)}.`, major[0].url, true);
+  }
+  const moving = steps.find((s) => s.status === "running" && s.key !== "updates");
+  if (moving) {
+    const [column, label] = {
+      built: ["building", "Building"],
+      bumped: ["deploying", "Deploying"],
+      deployed: ["deploying", "Deploying"],
+      healthy: ["live", "Checking health"],
+    }[moving.key] ?? ["live", moving.title];
+    return out(column, "accent", label, moving.detail, moving.url);
+  }
+  if (testing.length) {
+    return out("testing", "accent", "Testing update",
+      `${testing[0].title}${more(testing)}: CI is running; it merges itself when green.`, testing[0].url);
+  }
+  if (green.length) {
+    return out("merging", "accent", "Merging",
+      `${green[0].title}${more(green)} passed CI; the gate merges it within minutes.`, green[0].url);
+  }
+
+  const main = repo.main;
+  if (!main) {
+    return out("live", "unknown", "Not tracked", "No CI runs on main, so Argus cannot follow its changes.");
+  }
+  const deployed = step("deployed");
+  const healthy = step("healthy");
+  const change = `${main.title || `sha-${main.sha}`}`;
+  if (!deployed) {
+    return out("live", "up", "Up to date",
+      `Built ${change}. It ships inside another app, so it has no deploy of its own.`);
+  }
+  if (deployed.status === "not_wired") {
+    return out("live", "unknown", "Built, not deployed", `${change} is built; ${deployed.detail.toLowerCase()}.`);
+  }
+  const where = repo.stack?.host ? ` on ${repo.stack.host}` : "";
+  const check = healthy?.status === "not_wired" ? " (no health check)" : "";
+  return out("live", "up", "Up to date", `Live${where}${check}. Last change: ${change}.`);
+}
+
+// The page's one-sentence answer: does anything need you, is anything moving.
+export function lifecycleHeadline(states) {
+  const you = states.filter((s) => s.you).length;
+  const moving = states.filter((s) => !s.you && s.tone === "accent").length;
+  if (you) return `${plural(you, "app needs", "apps need")} you.`;
+  if (moving) return `${plural(moving, "update")} on the way, nothing needs you.`;
+  return `All ${plural(states.length, "app")} up to date.`;
+}
+
+// The next time a weekday's clock time comes round (day 0 Sunday .. 6 Saturday),
+// in the viewer's time zone, which for this homelab is the runs' own.
+export function nextWeekday(day, now, hhmm = "00:00") {
+  const [h, m] = hhmm.split(":").map(Number);
+  const d = new Date(now * 1000);
+  d.setDate(d.getDate() + ((day - d.getDay() + 7) % 7));
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() <= now * 1000) d.setDate(d.getDate() + 7);
+  return d;
+}
+
+export function dayText(d) {
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+// "Mondays 03:00" -> {day: 1, time: "03:00"}. Null for any other shape.
+const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+export function scheduleDay(schedule) {
+  const m = /^([a-z]+?)s?\s+(\d\d:\d\d)$/.exec(schedule?.trim().toLowerCase() ?? "");
+  const day = m ? DAYS.indexOf(m[1]) : -1;
+  return day < 0 ? null : { day, time: m[2] };
+}
+
+// "Mondays 03:00" -> "Mon, Nov 2, 03:00", the next run. Null for any other shape.
+export function nextRun(schedule, now) {
+  const d = scheduleDay(schedule);
+  return d && `${dayText(nextWeekday(d.day, now, d.time))}, ${d.time}`;
+}
+
+// A job's last run in one sentence anyone can read.
+export function jobResult(job, now) {
+  const last = job.last;
+  if (!last) return job.schedule ? `Has not run yet. First run: ${job.schedule}.` : "Has not run yet.";
+  const items = last.items ?? [];
+  const n = (r) => items.filter((i) => i.result === r).length;
+  let what = last.summary;
+  if (items.length) {
+    const parts = [`${n("ok")} of ${items.length} done`];
+    if (n("failed")) parts.push(`${n("failed")} failed`);
+    if (n("skipped")) parts.push(`${n("skipped")} skipped`);
+    what = parts.join(", ");
+  }
+  const verdict = last.result === "ok" ? "Passed" : "Failed";
+  const late = job.status === "late" ? `, and is overdue (limit ${ago(job.max_age)})` : "";
+  return `${verdict} ${agoText(now - last.finished)}${late}, took ${took(last.started, last.finished)}${what ? `: ${what}` : ""}.`;
+}
+
+// Merged PRs across every repo, newest first: the page's "what happened" list.
+export function recentMerges(repos = [], limit = 8) {
+  return repos
+    .flatMap((r) => r.merged.map((m) => ({ ...m, repo: r.name })))
+    .sort((a, b) => b.merged_at - a.merged_at)
+    .slice(0, limit);
+}
