@@ -250,10 +250,25 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
       setError(err.message);
     }
   };
+  const who = p.elsewhere ? "elsewhere" : "argus";
+  const pick = (w) => setP({ ...p, elsewhere: w === "elsewhere", enabled: w === "argus" });
   return (
     <form className="patch-form" onSubmit={save}>
-      <label className="toggle"><input type="checkbox" checked={p.enabled} onChange={(e) => set("enabled", e.target.checked)} />
-        <span><strong>Patch this host every week</strong></span></label>
+      <label className="toggle"><input type="radio" checked={who === "argus"} onChange={() => pick("argus")} />
+        <span><strong>Argus patches it every week</strong></span></label>
+      <label className="toggle"><input type="radio" checked={who === "elsewhere"} onChange={() => pick("elsewhere")} />
+        <span><strong>Something else patches it</strong>
+          <small>Ansible, unattended-upgrades, your hypervisor's tools. Argus then never patches it, so two tools never fight over one host.</small></span></label>
+      {who === "elsewhere" && (
+        <label className="field"><span>The job or timer that patches it (optional)</span>
+          <select value={p.elsewhere_job} onChange={(e) => set("elsewhere_job", e.target.value)}>
+            <option value="">None reports to Argus</option>
+            {refs.map((r) => <option key={r} value={r}>{r.replace(":", ": ")}</option>)}
+          </select>
+          <small>Name it and the host card shows how its last run went; a failed or late run already pages.</small>
+        </label>
+      )}
+      {who === "argus" && <>
       <div className="form-grid">
         <label className="field"><span>Day</span>
           <select value={p.day} onChange={(e) => set("day", Number(e.target.value))}>
@@ -286,6 +301,7 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
         <span>Reboot when an update needs it<small>Only when the safety net allows all updates.</small></span></label>
       <label className="toggle"><input type="checkbox" checked={p.accept_untested} onChange={(e) => set("accept_untested", e.target.checked)} />
         <span>Allow all updates with a backup that was never restore-tested</span></label>
+      </>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="actions">
         <button className="btn btn-primary">Save</button>
@@ -312,12 +328,21 @@ function Patching({ host, session, refs, reload }) {
   return (
     <section>
       <h4 className="eyebrow">patching</h4>
-      <p className="small">
-        {pt.plan.enabled
-          ? <>{pt.allowed[0].toUpperCase() + pt.allowed.slice(1)}, {DAYS[pt.plan.day]}s at {pt.plan.time} (host time).</>
-          : "Not patched by Argus."}{" "}
-        <span className="muted">Safety net: {pt.safety.net}.</span>
-      </p>
+      {pt.plan.elsewhere ? (
+        <p className="small">
+          Patched by something else{pt.elsewhere ? <>: {pt.elsewhere.title}{pt.elsewhere.schedule && `, ${pt.elsewhere.schedule}`}.{" "}
+            <span className={`st-${{ ok: "up", failed: "down", late: "failing" }[pt.elsewhere.status] ?? "unknown"}`}>
+              {pt.elsewhere.at ? `Last run ${pt.elsewhere.status === "ok" ? "ok" : pt.elsewhere.status} ${agoText(Date.now() / 1000 - pt.elsewhere.at)}` : "No run reported yet"}
+            </span>{pt.elsewhere.summary && <span className="muted">: {pt.elsewhere.summary}</span>}</> : "."}
+        </p>
+      ) : (
+        <p className="small">
+          {pt.plan.enabled
+            ? <>{pt.allowed[0].toUpperCase() + pt.allowed.slice(1)}, {DAYS[pt.plan.day]}s at {pt.plan.time} (host time).</>
+            : "Not patched by Argus."}{" "}
+          <span className="muted">Safety net: {pt.safety.net}.</span>
+        </p>
+      )}
       {pt.skipped && <p className="small st-failing">Not patched: {pt.skipped}.</p>}
       {last && (
         <p className="small">
@@ -331,8 +356,11 @@ function Patching({ host, session, refs, reload }) {
       {pt.requested && <p className="small muted">Patching on its next report, within a minute.</p>}
       {session?.signed_in && !host.read_only && !editing && (
         <div className="actions">
-          <button className="link-button small" onClick={() => setEditing(true)}>{pt.plan.enabled ? "Change the schedule" : "Choose a window"}</button>
-          <button className="link-button small" onClick={now} disabled={pt.requested || last?.result === "running"}>Patch now</button>
+          <button className="link-button small" onClick={() => setEditing(true)}>
+            {pt.plan.enabled || pt.plan.elsewhere ? "Change how it is patched" : "Choose a window"}</button>
+          {!pt.plan.elsewhere && (
+            <button className="link-button small" onClick={now} disabled={pt.requested || last?.result === "running"}>Patch now</button>
+          )}
         </div>
       )}
       {editing && <PatchForm host={host} session={session} refs={refs}
