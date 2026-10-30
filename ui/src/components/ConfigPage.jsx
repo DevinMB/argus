@@ -13,12 +13,15 @@ export function savedText(out) {
 }
 
 // Add or change one check. `check` is the existing one, or null for a new one.
-export function CheckForm({ session, check, sites, groups, hosts, onDone, onCancel }) {
+export function CheckForm({ session, check, initial, sites, groups, hosts, onDone, onCancel }) {
   const [f, setF] = useState(() => ({
+    ...{
     name: check?.name ?? "", kind: check?.kind ?? "http", target: check?.target ?? "",
     group: check?.group ?? "default", site: check?.site ?? Object.keys(sites)[0] ?? "",
     severity: check?.severity ?? "warning", interval: check?.interval ?? 60,
     companion: check?.companion ?? "",
+    },
+    ...initial, // a suggestion: filled in, still a new check
   }));
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
