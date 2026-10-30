@@ -7,6 +7,7 @@ import CheckDrawer from "./components/CheckDrawer.jsx";
 import CheckGrid from "./components/CheckGrid.jsx";
 import Asides from "./components/Asides.jsx";
 import Heartbeats from "./components/Heartbeats.jsx";
+import Hosts from "./components/Hosts.jsx";
 import Jobs from "./components/Jobs.jsx";
 import Meter from "./components/Meter.jsx";
 import Ring from "./components/Ring.jsx";
@@ -16,13 +17,13 @@ import { acrossSites, ago, agoText, byStatus, filterChecks, groupChecks, headlin
 const STATUS_FILTERS = [["all", "All"], ["problems", "Problems"], ["up", "Up"]];
 
 // The view and the selected check live in the hash (#/updates, #/updates/<repo>,
-// #/alerts, #/account, #/check/<name>) so a link can open any of them. A
+// #/hosts, #/alerts, #/account, #/check/<name>) so a link can open any of them. A
 // check's drawer opens over the Checks view.
 function useView() {
   const read = () => {
     const m = window.location.hash.match(/^#\/updates(?:\/(.+))?$/);
     if (m) return ["updates", m[1] && decodeURIComponent(m[1])];
-    const page = window.location.hash.match(/^#\/(alerts|account)$/);
+    const page = window.location.hash.match(/^#\/(hosts|alerts|account)$/);
     return page ? [page[1], null] : ["checks", null];
   };
   const [view, setView] = useState(read);
@@ -69,7 +70,7 @@ function linkGroups(links = []) {
 }
 
 export default function App() {
-  const { data, error, fetchedAt } = useArgus();
+  const { data, error, fetchedAt, reload } = useArgus();
   const [session, setSession] = useSession();
   const [selected, select] = useSelected();
   const [view, focus] = useView();
@@ -100,6 +101,7 @@ export default function App() {
   const stalled = data && now - data.info.last_tick > 30;
   const needYou = (data?.updates?.repos ?? []).filter((r) => lifecycle(r).you).length;
   const alertsUnset = data?.info.alerts && !data.info.alerts.ready;
+  const quietHosts = (data?.companions?.companions ?? []).filter((h) => h.status === "quiet").length;
   const locked = session?.view_requires_login && !session.signed_in;
   const settingsView = view === "alerts" || view === "account";
 
@@ -114,6 +116,9 @@ export default function App() {
           <a href="#" aria-current={view === "checks" ? "page" : undefined}>Checks</a>
           <a href="#/updates" aria-current={view === "updates" ? "page" : undefined}>
             Updates{needYou > 0 && <span className="tab-badge">{needYou}</span>}
+          </a>
+          <a href="#/hosts" aria-current={view === "hosts" ? "page" : undefined}>
+            Hosts{quietHosts > 0 && <span className="tab-badge" title="Hosts that stopped reporting">{quietHosts}</span>}
           </a>
           <a href="#/alerts" aria-current={view === "alerts" ? "page" : undefined}>
             Alerts{alertsUnset && <span className="tab-badge" title="Nothing sends alerts yet">!</span>}
@@ -150,6 +155,8 @@ export default function App() {
 
       {!locked && !settingsView && !data && !error && <p className="muted pad">Loading…</p>}
       {!locked && !settingsView && !data && error && <p className="banner banner-error">Cannot reach the Argus API: {error}</p>}
+
+      {!locked && data && view === "hosts" && <Hosts data={data.companions} session={session} reload={reload} />}
 
       {!locked && data && view === "updates" && <Updates updates={data.updates} now={now} focus={focus} />}
 

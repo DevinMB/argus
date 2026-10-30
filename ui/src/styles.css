@@ -577,3 +577,38 @@ code { font: 12.5px var(--mono); background: var(--raise); border-radius: 4px; p
   .field-row input { flex-basis: 100%; }
   .settings h1, .signin h1 { font-size: 26px; }
 }
+
+/* hosts (companions) */
+.hosts-page { padding: 32px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.hosts-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.hosts-head h1 { margin: 0 0 6px; }
+.hosts-head .lede { margin: 0; max-width: 70ch; }
+.hosts-page > .panel { max-width: 760px; }
+.hosts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 12px; }
+.host {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start;
+}
+.host-quiet { border-color: rgb(255 107 94 / 0.55); }
+.host-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.host-head h3 { margin: 0; font-size: 16px; }
+.host-seen { margin-left: auto; font-size: 12.5px; }
+.host-sentence { margin: 0; }
+.host h4 { margin-bottom: 6px; }
+.host section > p { margin: 0; }
+.host-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.host-list li {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 8px; align-items: center;
+}
+.host-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-note { font-size: 12.5px; }
+.host-sub { grid-column: 2 / -1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-list li.disk { grid-template-columns: minmax(0, 1fr) auto; }
+.disk .host-sub { grid-column: 1 / -1; }
+.bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--raise); overflow: hidden; }
+.bar > span { display: block; height: 100%; }
+.host-foot { border-top: 1px solid var(--line); padding-top: 10px; }
+.bar .fill-up { background: var(--up); }
+.bar .fill-failing { background: var(--failing); }
+.bar .fill-down { background: var(--down); }
+.snippet.command { white-space: pre-wrap; word-break: break-all; }

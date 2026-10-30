@@ -361,3 +361,57 @@ export function watcherSentence(alerts) {
 
 export const REPEATS = [[0, "Never"], [60, "Every hour"], [240, "Every 4 hours"],
   [720, "Every 12 hours"], [1440, "Once a day"]];
+
+// ---- hosts (companions) ----
+
+// "512 MB", "1.8 GB", "3.6 TB".
+export function bytes(n) {
+  if (n == null) return "–";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return i === 0 ? `${n} B` : `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+}
+
+export const DISK_WARN = 0.85;
+export const DISK_FULL = 0.95; // pages, as on the server
+
+export function diskTone(d) {
+  const r = d.total ? d.used / d.total : 0;
+  return r >= DISK_FULL ? "down" : r >= DISK_WARN ? "failing" : "up";
+}
+
+// A container with a problem: stopped, restarting or failing its health check.
+export function containerTrouble(c) {
+  return c.state !== "running" || c.health === "unhealthy";
+}
+
+// Problems first, then by name.
+export function sortContainers(list = []) {
+  return [...list].sort((a, b) => (containerTrouble(b) - containerTrouble(a)) || a.name.localeCompare(b.name));
+}
+
+// One plain sentence per host: what is running and what needs a look.
+export function hostSentence(host) {
+  if (host.status === "waiting") return "Enrolled; waiting for its first report.";
+  const r = host.report ?? {};
+  const parts = [];
+  if (r.containers) {
+    const bad = r.containers.filter(containerTrouble).length;
+    const n = r.containers.length;
+    parts.push(n === 0 ? "no containers"
+      : bad ? `${n} container${n === 1 ? "" : "s"}, ${bad} not running well`
+      : `${n} container${n === 1 ? "" : "s"}, all running`);
+  }
+  const disks = r.disks ?? [];
+  if (disks.length) {
+    const fullest = Math.max(...disks.map((d) => (d.total ? d.used / d.total : 0)));
+    parts.push(`${disks.length === 1 ? "disk" : `${disks.length} disks, fullest`} ${Math.round(fullest * 100)}% used`);
+  }
+  if (r.failed_units?.length) parts.push(`${r.failed_units.length} failed systemd unit${r.failed_units.length === 1 ? "" : "s"}`);
+  const p = r.updates?.pending;
+  if (p) parts.push(`${p} update${p === 1 ? "" : "s"} waiting${r.updates.security ? ` (${r.updates.security} security)` : ""}`);
+  if (r.reboot_required) parts.push("needs a reboot");
+  const text = parts.length ? parts.join(", ") : "reporting";
+  return text[0].toUpperCase() + text.slice(1) + ".";
+}

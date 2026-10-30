@@ -1,0 +1,397 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// Report is the host's state, sent once a minute. Fields the host cannot tell
+// (no Docker, no systemd) are left out rather than reported as empty.
+type Report struct {
+	Nonce          string        `json:"nonce"`
+	Version        string        `json:"version"`
+	Hostname       string        `json:"hostname"`
+	OS             string        `json:"os"`
+	Kernel         string        `json:"kernel"`
+	Arch           string        `json:"arch"`
+	Uptime         float64       `json:"uptime"`
+	ReadOnly       bool          `json:"read_only"`
+	Containers     []Container   `json:"containers"` // null: no Docker here
+	DockerError    string        `json:"docker_error,omitempty"`
+	FailedUnits    []string      `json:"failed_units"` // null: no systemd
+	Disks          []Disk        `json:"disks"`
+	Updates        *Updates      `json:"updates,omitempty"`
+	RebootRequired *bool         `json:"reboot_required,omitempty"`
+	Checks         []CheckResult `json:"checks"`
+}
+
+type Container struct {
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	State   string `json:"state"`
+	Health  string `json:"health"`
+	Status  string `json:"status"`
+	Project string `json:"project"`
+}
+
+type Disk struct {
+	Mount string `json:"mount"`
+	Total uint64 `json:"total"`
+	Used  uint64 `json:"used"`
+}
+
+type Updates struct {
+	Pending   *int    `json:"pending"`
+	Security  *int    `json:"security"`
+	Manager   string  `json:"manager"`
+	CheckedAt float64 `json:"checked_at"`
+	Error     string  `json:"error,omitempty"`
+}
+
+// Collector gathers a report. Paths are fields so tests can point them at fixtures.
+type Collector struct {
+	DockerSocket string
+	MountInfo    string
+	OSRelease    string
+	RebootFile   string
+	run          func(name string, args ...string) (string, int, error)
+
+	updates     *Updates
+	updatesNext time.Time
+}
+
+const updatesEvery = time.Hour
+
+func newCollector() *Collector {
+	return &Collector{
+		DockerSocket: "/var/run/docker.sock",
+		MountInfo:    "/proc/self/mountinfo",
+		OSRelease:    "/etc/os-release",
+		RebootFile:   "/var/run/reboot-required",
+		run:          runCommand,
+	}
+}
+
+// runCommand returns stdout and the exit code; err only when it could not run.
+func runCommand(name string, args ...string) (string, int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return string(out), exit.ExitCode(), nil
+	}
+	if err != nil {
+		return "", -1, err
+	}
+	return string(out), 0, nil
+}
+
+func (c *Collector) Collect(readOnly bool) *Report {
+	host, _ := os.Hostname()
+	r := &Report{Version: version, Hostname: host, Arch: runtime.GOARCH, ReadOnly: readOnly,
+		OS: osName(c.OSRelease), Kernel: firstLine("/proc/sys/kernel/osrelease"),
+		Disks: []Disk{}, Checks: []CheckResult{}}
+	if up := firstLine("/proc/uptime"); up != "" {
+		r.Uptime, _ = strconv.ParseFloat(strings.Fields(up)[0], 64)
+	}
+	if _, err := os.Stat(c.DockerSocket); err == nil {
+		r.Containers, err = dockerContainers(c.DockerSocket)
+		if err != nil {
+			r.Containers, r.DockerError = nil, err.Error()
+		}
+	}
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		out, code, err := c.run("systemctl", "list-units", "--state=failed", "--plain",
+			"--no-legend", "--no-pager")
+		if err == nil && code == 0 {
+			r.FailedUnits = parseFailedUnits(out)
+		}
+	}
+	if b, err := os.ReadFile(c.MountInfo); err == nil {
+		for _, m := range parseMountInfo(string(b)) {
+			var st syscall.Statfs_t
+			if syscall.Statfs(m, &st) != nil || st.Blocks == 0 {
+				continue
+			}
+			bs := uint64(st.Bsize)
+			used := (st.Blocks - st.Bfree) * bs
+			// As df counts it: what is used of what a user could use.
+			r.Disks = append(r.Disks, Disk{Mount: m, Total: used + st.Bavail*bs, Used: used})
+		}
+	}
+	if time.Now().After(c.updatesNext) {
+		c.updates = c.pendingUpdates()
+		c.updatesNext = time.Now().Add(updatesEvery)
+	}
+	r.Updates = c.updates
+	r.RebootRequired = c.rebootRequired()
+	return r
+}
+
+func firstLine(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.SplitN(string(b), "\n", 2)[0])
+}
+
+func osName(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return runtime.GOOS
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(line, "PRETTY_NAME="); ok {
+			return strings.Trim(v, `"'`)
+		}
+	}
+	return runtime.GOOS
+}
+
+// --- Docker, read-only: one GET on its socket ---
+
+func dockerContainers(socket string) ([]Container, error) {
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		},
+	}}
+	resp, err := client.Get("http://docker/containers/json?all=1")
+	if err != nil {
+		return nil, fmt.Errorf("docker: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, fmt.Errorf("docker: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("docker said HTTP %d", resp.StatusCode)
+	}
+	return parseContainers(body)
+}
+
+func parseContainers(body []byte) ([]Container, error) {
+	var raw []struct {
+		Names  []string
+		Image  string
+		State  string
+		Status string
+		Labels map[string]string
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("docker: %w", err)
+	}
+	out := make([]Container, 0, len(raw))
+	for _, c := range raw {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		out = append(out, Container{Name: name, Image: c.Image, State: c.State,
+			Health: healthOf(c.Status), Status: c.Status,
+			Project: c.Labels["com.docker.compose.project"]})
+	}
+	return out, nil
+}
+
+func healthOf(status string) string {
+	switch {
+	case strings.Contains(status, "(unhealthy)"):
+		return "unhealthy"
+	case strings.Contains(status, "(healthy)"):
+		return "healthy"
+	case strings.Contains(status, "(health: starting)"):
+		return "starting"
+	}
+	return ""
+}
+
+// --- systemd ---
+
+func parseFailedUnits(out string) []string {
+	units := []string{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) > 0 {
+			units = append(units, f[0])
+		}
+	}
+	return units
+}
+
+// --- disks ---
+
+// Filesystems that hold data. Not tmpfs, overlay, squashfs, network mounts
+// (statfs on a dead NFS server hangs) or the EFI partition.
+var diskTypes = map[string]bool{"ext2": true, "ext3": true, "ext4": true, "xfs": true,
+	"btrfs": true, "zfs": true, "f2fs": true, "bcachefs": true}
+
+// parseMountInfo returns one mount point per device, the shortest, so bind
+// mounts and btrfs subvolumes of one disk count once.
+func parseMountInfo(text string) []string {
+	best := map[string]string{}
+	var order []string
+	for _, line := range strings.Split(text, "\n") {
+		pre, post, ok := strings.Cut(line, " - ")
+		f, g := strings.Fields(pre), strings.Fields(post)
+		if !ok || len(f) < 5 || len(g) < 1 || !diskTypes[g[0]] {
+			continue
+		}
+		dev, mount := f[2], unescape(f[4])
+		if strings.HasPrefix(mount, "/var/lib/docker/") || strings.HasPrefix(mount, "/snap/") {
+			continue
+		}
+		if g[0] == "zfs" && len(g) > 1 {
+			dev = g[1] // every dataset of a pool shares 0:NN; tell them apart by name
+		}
+		if old, seen := best[dev]; !seen {
+			order = append(order, dev)
+			best[dev] = mount
+		} else if len(mount) < len(old) {
+			best[dev] = mount
+		}
+	}
+	out := make([]string, 0, len(order))
+	for _, d := range order {
+		out = append(out, best[d])
+	}
+	return out
+}
+
+func unescape(s string) string {
+	r := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	return r.Replace(s)
+}
+
+// --- package updates, at most hourly: never refreshes package lists itself ---
+
+func (c *Collector) pendingUpdates() *Updates {
+	u := &Updates{CheckedAt: float64(time.Now().Unix())}
+	switch {
+	case has("apt-get"):
+		u.Manager = "apt"
+		out, code, err := c.run("apt-get", "-s", "-o", "Debug::NoLocking=true",
+			"-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "dist-upgrade")
+		if err != nil || code != 0 {
+			u.Error = commandError("apt-get -s dist-upgrade", code, err)
+			return u
+		}
+		n, sec := parseAptSim(out)
+		u.Pending, u.Security = &n, &sec
+	case has("dnf"):
+		u.Manager = "dnf"
+		out, code, err := c.run("dnf", "-q", "-C", "check-update")
+		if err != nil || (code != 0 && code != 100) {
+			u.Error = commandError("dnf check-update", code, err)
+			return u
+		}
+		n := parseDnfCheckUpdate(out)
+		u.Pending = &n
+		if out, code, err := c.run("dnf", "-q", "-C", "updateinfo", "list", "--security"); err == nil && code == 0 {
+			sec := len(nonEmptyLines(out))
+			u.Security = &sec
+		}
+	case has("apk"):
+		u.Manager = "apk"
+		out, code, err := c.run("apk", "list", "-u")
+		if err != nil || code != 0 {
+			u.Error = commandError("apk list -u", code, err)
+			return u
+		}
+		n := len(nonEmptyLines(out))
+		u.Pending = &n
+	default:
+		return nil
+	}
+	return u
+}
+
+func has(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func commandError(what string, code int, err error) string {
+	if err != nil {
+		return what + ": " + err.Error()
+	}
+	return fmt.Sprintf("%s exited %d", what, code)
+}
+
+func nonEmptyLines(s string) []string {
+	var out []string
+	sc := bufio.NewScanner(strings.NewReader(s))
+	for sc.Scan() {
+		if t := strings.TrimSpace(sc.Text()); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// parseAptSim counts "Inst" lines of apt-get -s, and those from a -security suite.
+func parseAptSim(out string) (pending, security int) {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Inst ") {
+			pending++
+			if strings.Contains(line, "-security") {
+				security++
+			}
+		}
+	}
+	return
+}
+
+// parseDnfCheckUpdate counts package lines (name.arch version repo) before any
+// "Obsoleting Packages" section.
+func parseDnfCheckUpdate(out string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Obsoleting") {
+			break
+		}
+		if f := strings.Fields(line); len(f) == 3 && strings.Contains(f[0], ".") {
+			n++
+		}
+	}
+	return n
+}
+
+func (c *Collector) rebootRequired() *bool {
+	yes, no := true, false
+	if _, err := os.Stat(c.RebootFile); err == nil {
+		return &yes
+	}
+	if has("needs-restarting") {
+		if _, code, err := c.run("needs-restarting", "-r"); err == nil {
+			if code == 1 {
+				return &yes
+			}
+			if code == 0 {
+				return &no
+			}
+		}
+		return nil
+	}
+	if has("apt-get") {
+		return &no // Debian and Ubuntu write the file when they need one
+	}
+	return nil
+}

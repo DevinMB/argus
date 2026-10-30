@@ -108,6 +108,8 @@ class Collector:
                 ok.add_metric(lv, run["last_success"])
         yield from (result, ran, ok, job_age)
 
+        yield from self.companions()
+
         yield GaugeMetricFamily(
             "argus_scheduler_last_tick_timestamp_seconds",
             "Last scheduler loop. Stale means checks have stopped running.",
@@ -138,6 +140,34 @@ class Collector:
         })
         yield info
 
+
+    def companions(self):
+        """One series per host's companion; absent until its first report."""
+        last = GaugeMetricFamily(
+            "argus_companion_last_report_timestamp_seconds",
+            "When the host's companion last reported.", labels=["companion"])
+        disk = GaugeMetricFamily(
+            "argus_companion_disk_used_ratio", "Share of the filesystem in use (0 to 1).",
+            labels=["companion", "mount"])
+        reboot = GaugeMetricFamily(
+            "argus_companion_reboot_required", "1 if the host says it needs a reboot.",
+            labels=["companion"])
+        pending = GaugeMetricFamily(
+            "argus_companion_updates_pending", "Package updates the host has not installed.",
+            labels=["companion"])
+        for c in self.rt.companions.views():
+            rep = c["report"]
+            if c["last_seen"] is None or rep is None:
+                continue
+            last.add_metric([c["name"]], c["last_seen"])
+            for d in rep.get("disks", []):
+                if d["total"]:
+                    disk.add_metric([c["name"], d["mount"]], d["used"] / d["total"])
+            if rep.get("reboot_required") is not None:
+                reboot.add_metric([c["name"]], 1 if rep["reboot_required"] else 0)
+            if (rep.get("updates") or {}).get("pending") is not None:
+                pending.add_metric([c["name"]], rep["updates"]["pending"])
+        yield from (last, disk, reboot, pending)
 
     def github(self):
         """The app pipeline (decision 0010). Absent until the first good poll."""

@@ -41,20 +41,24 @@ export function useArgus() {
   const [error, setError] = useState(null);
   const [fetchedAt, setFetchedAt] = useState(null);
   const timer = useRef(null);
+  const loader = useRef(null);
+  const reload = useCallback(() => loader.current?.(), []);
 
   useEffect(() => {
     let ctrl;
     const load = async () => {
+      clearTimeout(timer.current);
       ctrl = new AbortController();
       try {
-        const [info, checks, heartbeats, updates, jobs] = await Promise.all([
+        const [info, checks, heartbeats, updates, jobs, companions] = await Promise.all([
           getJSON("/api/info", ctrl.signal),
           getJSON("/api/checks", ctrl.signal),
           getJSON("/api/heartbeats", ctrl.signal),
           getJSON("/api/updates", ctrl.signal),
           getJSON("/api/jobs", ctrl.signal),
+          getJSON("/api/companions", ctrl.signal),
         ]);
-        setData({ info, checks, heartbeats, updates, jobs });
+        setData({ info, checks, heartbeats, updates, jobs, companions });
         setError(null);
         setFetchedAt(Date.now());
       } catch (e) {
@@ -62,6 +66,7 @@ export function useArgus() {
       }
       timer.current = setTimeout(load, REFRESH_MS);
     };
+    loader.current = load;
     load();
     return () => {
       clearTimeout(timer.current);
@@ -69,7 +74,7 @@ export function useArgus() {
     };
   }, []);
 
-  return { data, error, fetchedAt };
+  return { data, error, fetchedAt, reload };
 }
 
 export async function getCheck(name, signal) {

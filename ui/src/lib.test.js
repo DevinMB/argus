@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
+import { acrossSites, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -238,5 +238,36 @@ describe("alerts text", () => {
     expect(watcherSentence({ watched: false, sender: "argus" })).toMatch(/^Nothing watches Argus/);
     expect(watcherSentence({ watched: true })).toMatch(/outside service/);
     expect(watcherSentence({ watched: false, sender: "prometheus" })).toMatch(/ArgusDown/);
+  });
+});
+
+describe("hosts", () => {
+  it("formats sizes", () => {
+    expect(bytes(512)).toBe("512 B");
+    expect(bytes(1.8 * 1024 ** 3)).toBe("1.8 GB");
+    expect(bytes(29895020544)).toBe("28 GB");
+  });
+
+  it("tones disks like the server pages them", () => {
+    expect(diskTone({ total: 100, used: 50 })).toBe("up");
+    expect(diskTone({ total: 100, used: 90 })).toBe("failing");
+    expect(diskTone({ total: 100, used: 96 })).toBe("down");
+  });
+
+  it("puts troubled containers first", () => {
+    const list = [{ name: "b", state: "running" }, { name: "a", state: "running", health: "unhealthy" },
+                  { name: "c", state: "exited" }];
+    expect(sortContainers(list).map((c) => c.name)).toEqual(["a", "c", "b"]);
+  });
+
+  it("sums a host up in one sentence", () => {
+    expect(hostSentence({ status: "waiting" })).toBe("Enrolled; waiting for its first report.");
+    expect(hostSentence({ status: "ok", report: {
+      containers: [{ name: "a", state: "running" }, { name: "b", state: "exited" }],
+      disks: [{ total: 100, used: 40 }, { total: 100, used: 91 }],
+      failed_units: [], updates: { pending: 3, security: 1 }, reboot_required: true,
+    } })).toBe("2 containers, 1 not running well, 2 disks, fullest 91% used, 3 updates waiting (1 security), needs a reboot.");
+    expect(hostSentence({ status: "ok", report: { containers: null, disks: [{ total: 10, used: 1 }] } }))
+      .toBe("Disk 10% used.");
   });
 });
