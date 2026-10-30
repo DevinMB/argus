@@ -116,6 +116,45 @@ jobs:
           jq -e '.companions[0].stacks[0].detail | contains("privileged")' hosts.json
           curl -s localhost:8099/ | grep -q 'hello from argus'  # the running stack is untouched
 
+          # Migration day, rehearsed: a stack started the old way (a plain compose up in
+          # its own folder, data beside it, an .env) that the deploy repo also lists is
+          # held back, then linked: same container, same data, nothing restarted.
+          sudo mkdir -p /opt/legacy/hello2/data
+          echo kept | sudo tee /opt/legacy/hello2/data/keep.txt >/dev/null
+          echo "GREETING=old" | sudo tee /opt/legacy/hello2/.env >/dev/null
+          printf '%s\n' 'services:' '  web:' '    image: busybox:1.37' \
+            '    command: ["httpd", "-f", "-p", "8098", "-h", "/www"]' \
+            '    environment: {GREETING: "${GREETING}"}' '    volumes: ["./data:/www:ro"]' \
+            '    ports: ["8098:8098"]' \
+            '    healthcheck: {test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8098/keep.txt"], interval: 2s, retries: 10}' \
+            | sudo tee /opt/legacy/hello2/compose.yml >/dev/null
+          sudo docker compose --project-directory /opt/legacy/hello2 -p hello2 up -d --wait
+          before=$(docker inspect -f '{{.Id}}' hello2-web-1)
+          mkdir -p deploy/sites/ci/hello2 && cp /opt/legacy/hello2/compose.yml deploy/sites/ci/hello2/
+          echo sites/ci/hello2 >> deploy/hosts/runner
+          for _ in $(seq 60); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "link"' hosts.json >/dev/null && break; sleep 3
+          done
+          jq '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | {status, held}' hosts.json
+          jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .held == "/opt/legacy/hello2"' hosts.json
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/adopt/runner/hello2/read
+          for _ in $(seq 40); do
+            curl -skf -b jar https://localhost:8080/api/adopt/runner/hello2 > pv.json
+            jq -e '.state == "ready"' pv.json >/dev/null && break; sleep 3
+          done
+          jq '{state, mode, path, dir, secrets, blockers}' pv.json
+          jq -e '.mode == "link" and .blockers == [] and .secrets == ["GREETING"]' pv.json
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/adopt/runner/hello2
+          for _ in $(seq 60); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "deployed"' hosts.json >/dev/null && break; sleep 3
+          done
+          jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "deployed"' hosts.json
+          test "$(docker inspect -f '{{.Id}}' hello2-web-1)" = "$before"  # not recreated
+          curl -sf localhost:8098/keep.txt | grep -qx kept                # its data, in place
+          sudo grep -q "GREETING='old'" /opt/legacy/hello2/.env           # its .env, now from Argus
+
           # Patching: "Patch now" runs security updates in a transient unit, outside the
           # companion's sandbox, and reports how it went. (Sundays allowed for this
           # one runner, so the build passes on any day.)

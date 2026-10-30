@@ -62,16 +62,28 @@ class Adoption:
         self.settings, self.deploys, self.clock = settings, deploys, clock
         self.collected: dict[tuple[str, str], dict] = {}  # memory only
 
+    def _link_target(self, host: dict, project: str) -> str | None:
+        """The deploy repo's path for this project, when the host's list already has
+        it but it runs from a folder Argus does not manage yet."""
+        for st in self.deploys.stacks_for(host["name"], host.get("report")):
+            if st["name"] == project and st.get("held"):
+                return st["path"]
+        return None
+
     def projects(self, host: dict) -> list[dict]:
-        """The host's running Compose projects that git does not deploy yet."""
+        """The host's running Compose projects that git does not deploy yet: new
+        ones to adopt, and ones already in the repo to link."""
         rep = host.get("report") or {}
-        managed = {s["name"] for s in self.deploys.stacks_for(host["name"])}
+        stacks = self.deploys.stacks_for(host["name"], rep)
+        managed = {s["name"] for s in stacks if not s.get("held")}
+        linkable = {s["name"]: s["path"] for s in stacks if s.get("held")}
         out: dict[str, dict] = {}
         for c in rep.get("containers") or []:
             p = c.get("project")
             if not p or p in managed or not c.get("working_dir"):
                 continue
-            entry = out.setdefault(p, {"project": p, "dir": c["working_dir"], "containers": []})
+            entry = out.setdefault(p, {"project": p, "dir": c["working_dir"], "containers": [],
+                                       "link": linkable.get(p)})
             entry["containers"].append(c["name"])
         return list(out.values())
 
@@ -97,7 +109,8 @@ class Adoption:
     def preview(self, host: dict, project: str) -> dict:
         name = host["name"]
         got = self._get(name, project)
-        path = f"sites/{name}/{project}"
+        link = self._link_target(host, project)
+        path = link or f"sites/{name}/{project}"
         if got is None:
             return {"state": "collecting" if project in self.to_collect(name) else "none",
                     "path": path}
@@ -107,6 +120,20 @@ class Adoption:
                  for n, b in (got.get("files") or {}).items()}
         env, bad = parse_env(got.get("env") or "")
         blockers = []
+        roots = (host.get("report") or {}).get("policy_roots") or []
+        d = got["dir"]
+        outside = roots and not any(d == r.rstrip("/") or d.startswith(r.rstrip("/") + "/")
+                                    for r in roots)
+        if link:
+            # Already in the repo: no commit, no token. Git's version is what deploys.
+            snap = self.deploys.snapshot
+            in_git = {n: b.decode(errors="replace") for n, b in snap.stacks.get(link, {}).items()}
+            differs = sorted(n for n, t in files.items() if in_git.get(n) not in (None, t))
+            if outside:
+                blockers.append(self._outside(d, roots))
+            return {"state": "ready", "mode": "link", "path": path, "dir": d, "files": files,
+                    "differs": differs, "secrets": sorted(env), "unreadable_env_lines": len(bad),
+                    "blockers": [{"text": t, "href": h} for t, h in blockers]}
         repo = self.settings.get(REPO)
         src = self.deploys.source()
         if not repo or not isinstance(src, GitHubSource):
@@ -120,23 +147,24 @@ class Adoption:
                 f"The compose file writes {', '.join(inline)} into itself, so it would reach git. "
                 "Move each value into the project's .env and write ${NAME} in its place, then "
                 "read the files again.", None))
-        roots = (host.get("report") or {}).get("policy_roots") or []
-        d = got["dir"]
-        if roots and not any(d == r.rstrip("/") or d.startswith(r.rstrip("/") + "/")
-                             for r in roots):
-            blockers.append((
-                f"{d} is outside the folders this host lets Argus manage "
-                f"({', '.join(roots)}). On the host, add it to bind_roots in "
-                "/etc/argus-companion/policy.json, then read the files again.", None))
+        if outside:
+            blockers.append(self._outside(d, roots))
         snap = self.deploys.snapshot
         if snap and path in snap.stacks:
             blockers.append((f"{path} already exists in the deploy repo.", None))
-        return {"state": "ready", "path": path, "dir": d, "files": files,
+        return {"state": "ready", "mode": "adopt", "path": path, "dir": d, "files": files,
                 "secrets": sorted(env), "unreadable_env_lines": len(bad),
                 "blockers": [{"text": t, "href": h} for t, h in blockers]}
 
-    async def adopt(self, host: dict, project: str) -> str:
-        """Commit the project and seal its secrets. Returns the commit."""
+    @staticmethod
+    def _outside(d: str, roots: list[str]) -> tuple[str, None]:
+        return (f"{d} is outside the folders this host lets Argus manage "
+                f"({', '.join(roots)}). On the host, add it to bind_roots in "
+                "/etc/argus-companion/policy.json, then read the files again.", None)
+
+    async def adopt(self, host: dict, project: str) -> str | None:
+        """Adopt: commit the project and seal its secrets; returns the commit.
+        Link (already in the repo): seal its secrets and deploy it in place; None."""
         pv = self.preview(host, project)
         if pv["state"] != "ready" or pv["blockers"]:
             raise ValueError("not ready: " + "; ".join(b["text"] for b in pv.get("blockers", []))
@@ -144,6 +172,11 @@ class Adoption:
         name, path = host["name"], pv["path"]
         got = self._get(name, project)
         env, _ = parse_env(got.get("env") or "")
+        if pv["mode"] == "link":
+            self.deploys.set_env(path, env)
+            self.settings.set(DIR + path, pv["dir"])
+            self.collected.pop((name, project), None)
+            return None
         snap = self.deploys.snapshot
         # Append to the host's file as written, comments and all.
         before = (snap.hosts_text.get(name) if snap else None) or ""

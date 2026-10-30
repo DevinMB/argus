@@ -98,7 +98,7 @@ def test_adopting_in_place_commits_files_and_seals_secrets(env):
     report(c, tok)
     (host,) = c.get("/api/companions").json()["companions"]
     assert host["adoptable"] == [{"project": "media", "dir": "/srv/media",
-                                  "containers": ["jellyfin"]}]
+                                  "containers": ["jellyfin"], "link": None}]
     assert c.post("/api/adopt/nas/media/read", headers=csrf).json()["state"] == "collecting"
     assert report(c, tok)["collect"] == ["media"]  # Argus names the project, nothing more
     assert "collect" not in report(c, tok, collected=collected())
@@ -150,3 +150,42 @@ def test_env_and_inline_secret_parsing():
     assert env == {"A": "1", "B": "two words", "C": "x=y"} and len(bad) == 1
     assert inline_secrets("x:\n  DB_PASSWORD: s3cret\n  TOKEN: ${TOKEN}\n"
                           "  - GH_TOKEN=abc\n") == ["DB_PASSWORD", "GH_TOKEN"]
+
+
+def test_a_stack_already_running_from_its_old_folder_waits_to_be_linked(env):
+    """Migrating from stack-sync: hosts/nas lists sites/nas/old, and it runs from
+    the old checkout. Deploying it elsewhere would start a second copy, so it is
+    held back until linked; linking needs no commit and no write token."""
+    c, csrf, tok, fake = env
+    c.app.state.settings.set_secret(WRITE_TOKEN, None)
+    running = [{"name": "old-old-1", "state": "running", "project": "old",
+                "working_dir": "/opt/homelab-stacks/sites/nas/old",
+                "config_files": ["/opt/homelab-stacks/sites/nas/old/compose.yml"]}]
+    reply = report(c, tok, containers=running)
+    assert reply["deploy"]["stacks"] == []  # held back, not sent
+    (host,) = c.get("/api/companions").json()["companions"]
+    assert host["stacks"][0]["status"] == "link"
+    assert host["stacks"][0]["held"] == "/opt/homelab-stacks/sites/nas/old"
+    assert host["adoptable"][0]["link"] == "sites/nas/old"
+
+    c.post("/api/adopt/nas/old/read", headers=csrf)
+    report(c, tok, containers=running, collected=[{
+        "project": "old", "dir": "/opt/homelab-stacks/sites/nas/old", "env": "PASS=x\n",
+        "files": {"compose.yml": base64.b64encode(
+            fake.files["sites/nas/old/compose.yml"].encode()).decode()}}])
+    pv = c.get("/api/adopt/nas/old", headers=csrf).json()
+    assert pv["mode"] == "link" and pv["path"] == "sites/nas/old" and pv["blockers"] == []
+    assert pv["differs"] == [] and pv["secrets"] == ["PASS"]
+    assert c.post("/api/adopt/nas/old", headers=csrf).json() == {"commit": None}
+    assert fake.commits == []  # nothing written to git
+
+    (st,) = report(c, tok, containers=running)["deploy"]["stacks"]
+    assert st["dir"] == "/opt/homelab-stacks/sites/nas/old" and st["name"] == "old"
+    assert "PASS='x'" in st["env"]
+
+
+def test_project_names_follow_compose():
+    from argus.deploys import project_name
+    assert project_name("sites/home/My_App", {"compose.yml": b"services: {}"}) == "my_app"
+    assert project_name("sites/home/x", {"compose.yml": b"name: Shop\nservices: {}"}) == "shop"
+    assert project_name("sites/home/x", {"docker-compose.yml": b"name: [bad]"}) == "x"

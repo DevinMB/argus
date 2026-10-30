@@ -53,13 +53,14 @@ const retryFailedAfter = time.Hour
 // the files the deploy repo has for the stack; anything else in the folder
 // (./data from a relative bind) is the stack's own and stays.
 type Deployer struct {
-	StateDir   string
-	StacksDir  string
-	PolicyPath string
-	Policy     *Policy
-	PolicyErr  error
-	compose    func(dir string, env []string, args ...string) (string, error)
-	now        func() time.Time
+	StateDir     string
+	DockerSocket string
+	StacksDir    string
+	PolicyPath   string
+	Policy       *Policy
+	PolicyErr    error
+	compose      func(dir string, env []string, args ...string) (string, error)
+	now          func() time.Time
 }
 
 type deployState struct {
@@ -69,7 +70,7 @@ type deployState struct {
 
 func newDeployer(stateDir string, policyPath string) *Deployer {
 	return &Deployer{StateDir: stateDir, StacksDir: filepath.Join(stateDir, "stacks"),
-		PolicyPath: policyPath, compose: runCompose, now: time.Now}
+		PolicyPath: policyPath, DockerSocket: "/var/run/docker.sock", compose: runCompose, now: time.Now}
 }
 
 func (d *Deployer) load() *deployState {
@@ -176,6 +177,16 @@ func (d *Deployer) one(s *deployState, st StackSpec, pull *PullCred) DeployResul
 			return res("refused", err.Error())
 		}
 		dir = filepath.Clean(st.Dir)
+	}
+	// The same project running from another folder: deploying here would start a
+	// second copy and leave data beside the old one. It must be linked in Argus.
+	if cs, err := dockerContainers(d.DockerSocket); err == nil {
+		for _, c := range cs {
+			if c.Project == st.Name && c.WorkingDir != "" && filepath.Clean(c.WorkingDir) != dir {
+				return res("refused", fmt.Sprintf("%s already runs from %s; link it on the host's card in Argus, so it keeps that folder",
+					st.Name, c.WorkingDir))
+			}
+		}
 	}
 
 	// 1. The policy, on the stack as Compose resolves it, before anything is written.
