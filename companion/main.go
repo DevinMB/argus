@@ -4,6 +4,7 @@
 //	argus-companion run [--config PATH] [--state DIR] [--policy PATH] [--once]
 //	argus-companion report [--config PATH]   print the report it would send
 //	argus-companion policy                   print the default policy file
+//	argus-companion policy-roots             print the policy's bind roots (for the unit)
 //	argus-companion version
 //
 // It only ever calls Argus (HTTPS, pinned); nothing listens on the host. It
@@ -84,6 +85,18 @@ func main() {
 	case "policy":
 		b, _ := json.MarshalIndent(defaultPolicy(), "", "  ")
 		fmt.Println(string(b))
+	case "policy-roots":
+		// For the install script: the folders deploys may write, as the unit's
+		// ReadWritePaths. Everything else stays read-only to the service.
+		path := fs.String("policy", policyFile, "the policy file")
+		_ = fs.Parse(args)
+		p, err := loadPolicy(*path)
+		if err != nil {
+			fail(err.Error())
+		}
+		for _, r := range p.BindRoots {
+			fmt.Println(r)
+		}
 	case "report":
 		_ = fs.Parse(args)
 		readOnly := false
@@ -186,7 +199,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: argus-companion enroll|run|report|policy|version [--config PATH]")
+	fmt.Fprintln(os.Stderr, "usage: argus-companion enroll|run|report|policy|policy-roots|version [--config PATH]")
 	os.Exit(2)
 }
 

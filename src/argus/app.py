@@ -1018,7 +1018,10 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         }
         d = request.app.state.deploys
         if not row["read_only"] and d.snapshot is not None:
-            stacks = d.stacks_for(row["name"])
+            # A stack already running from a folder Argus does not manage waits to be
+            # linked on the host card; sending it would start a second copy.
+            stacks = [s for s in d.stacks_for(row["name"], rep.model_dump())
+                      if not s.get("held")]
             done = {(x.path, x.digest) for x in rep.deploys if x.result == "ok"}
             # A pull credential only when something is about to be deployed.
             due = any((s["path"], s["digest"]) not in done for s in stacks)

@@ -165,6 +165,7 @@ const STACK = {
   deployed: ["up", "deployed"], pending: ["failing", "deploying"], failed: ["down", "failed"],
   refused: ["down", "refused by policy"], rolled_back: ["down", "rolled back"],
   read_only: ["unknown", "not deployed: monitoring only"],
+  link: ["accent", "waiting to be linked"],
 };
 
 // A stack's secrets: names are shown, values are write-only.
@@ -215,7 +216,11 @@ function Stacks({ stacks, session, reload }) {
             <span className="host-item">{st.name}</span>
             <span className={`st-${tone} host-note`}>{word}</span>
             <span className="muted host-sub mono">{st.path}{st.at ? ` · ${agoText(Date.now() / 1000 - st.at)}` : ""}</span>
-            {st.detail && st.status !== "deployed" && <pre className="host-wide log small">{st.detail}</pre>}
+            {st.status === "link" && (
+              <span className="host-wide small muted">Runs from <code>{st.held}</code>, outside Argus. Link it below
+                to deploy it from git where it is.</span>
+            )}
+            {st.detail && st.status !== "deployed" && st.status !== "link" && <pre className="host-wide log small">{st.detail}</pre>}
             {session?.signed_in && (
               <button className="link-button small host-wide secrets-toggle" onClick={() => setOpen(open === st.path ? null : st.path)}>
                 Secrets ({st.secrets.length})
@@ -342,12 +347,14 @@ function NotFromGit({ host, session, reload }) {
   if (!host.adoptable?.length) return null;
   return (
     <section>
-      <h4 className="eyebrow">running here, not from git</h4>
+      <h4 className="eyebrow">running here, not deployed by Argus</h4>
       <ul className="host-list suggest">{host.adoptable.map((p) => (
         <li key={p.project}>
           <span className="dot dot-unknown" />
           <span className="host-item">{p.project} <span className="muted mono">{p.dir}</span></span>
-          {session?.signed_in && open !== p.project && <button className="btn" onClick={() => setOpen(p.project)}>Deploy from git</button>}
+          {session?.signed_in && open !== p.project && (
+            <button className="btn" onClick={() => setOpen(p.project)}>{p.link ? "Link" : "Deploy from git"}</button>
+          )}
           {open === p.project && (
             <div className="host-wide">
               <Adopt host={host.name} project={p} session={session}

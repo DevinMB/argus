@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/base64"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +50,7 @@ func newTestDeployer(t *testing.T) (*Deployer, *fakeCompose) {
 	f := &fakeCompose{}
 	d := newDeployer(t.TempDir(), filepath.Join(t.TempDir(), "absent.json"))
 	d.compose = f.run
+	d.DockerSocket = filepath.Join(t.TempDir(), "no-docker")
 	return d, f
 }
 
@@ -159,5 +163,29 @@ func TestUnsafePathsAndABrokenPolicyRefuse(t *testing.T) {
 	if r := d2.Results(&DeployPlan{Stacks: []StackSpec{stack("d1", "v1")}})[0]; r.Result != "refused" ||
 		!strings.Contains(r.Detail, "policy file is unreadable") {
 		t.Fatalf("a policy that does not parse must refuse everything, got %+v", r)
+	}
+}
+
+func TestAProjectRunningFromAnotherFolderIsNotStartedTwice(t *testing.T) {
+	d, f := newTestDeployer(t)
+	sock := filepath.Join(t.TempDir(), "docker.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Skip("no unix sockets here")
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `[{"Names":["/web-1"],"State":"running","Labels":{
+		  "com.docker.compose.project":"web","com.docker.compose.project.working_dir":"/opt/homelab-stacks/sites/home/web"}}]`)
+	})}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	d.DockerSocket = sock
+	d.Apply(&DeployPlan{Stacks: []StackSpec{stack("d1", "v1")}})
+	r := d.Results(&DeployPlan{Stacks: []StackSpec{stack("d1", "v1")}})[0]
+	if r.Result != "refused" || !strings.Contains(r.Detail, "already runs from /opt/homelab-stacks/sites/home/web") {
+		t.Fatalf("got %+v", r)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("nothing may run: %v", f.calls)
 	}
 }

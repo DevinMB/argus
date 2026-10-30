@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
+import yaml
 
 from argus.ghauth import AppCredentials
 from argus.settings import Settings
@@ -79,6 +80,35 @@ def image_re(owner: str, repo: str) -> re.Pattern:
 
 
 COMPOSE = ("compose.yml", "compose.yaml", "docker-compose.yml")
+OWN = "/var/lib/argus-companion/stacks/"  # where a companion keeps stacks it made itself
+
+
+def project_name(path: str, files: dict[str, bytes]) -> str:
+    """The Compose project name, as Compose and stack-sync work it out: the file's
+    top-level `name:`, else the folder's name, lowercased, with only a-z, 0-9, _ and -."""
+    for n in COMPOSE:
+        if n in files:
+            try:
+                doc = yaml.safe_load(files[n]) or {}
+            except yaml.YAMLError:
+                doc = {}
+            if isinstance(doc, dict) and isinstance(doc.get("name"), str) and doc["name"]:
+                return re.sub(r"[^a-z0-9_-]", "", doc["name"].lower())
+            break
+    return re.sub(r"[^a-z0-9_-]", "", path.rsplit("/", 1)[-1].lower())
+
+
+def running_elsewhere(stack: dict, report: dict | None) -> str | None:
+    """The folder a stack's project already runs from, when that is not where Argus
+    would deploy it. Deploying then would start it again from another folder (and
+    lose data kept beside the old one), so such a stack waits to be linked."""
+    target = stack.get("dir")
+    for c in (report or {}).get("containers") or []:
+        wd = (c.get("working_dir") or "").rstrip("/")
+        if c.get("project") == stack["name"] and wd and wd != target and not (
+                wd + "/").startswith(OWN):
+            return wd
+    return None
 
 
 def parse_hosts(name_to_text: dict[str, str]) -> dict[str, list[str]]:
@@ -335,8 +365,10 @@ class Deploys:
                 env[k] = v
         self.settings.set_secret(SECRETS + stack, json.dumps(env) if env else None)
 
-    def stacks_for(self, host: str) -> list[dict]:
-        """What a host should run: each stack's files, .env and digest."""
+    def stacks_for(self, host: str, report: dict | None = None) -> list[dict]:
+        """What a host should run: each stack's files, .env and digest. With the
+        host's report, a stack already running from a folder Argus does not manage
+        is marked `held` (that folder) and must not be sent until it is linked."""
         snap = self.snapshot
         if snap is None:
             return []
@@ -352,13 +384,16 @@ class Deploys:
             digest = hashlib.sha256(json.dumps(
                 [{n: hashlib.sha256(b).hexdigest() for n, b in files.items()}, env],
                 sort_keys=True).encode()).hexdigest()[:16]
-            stack = {"path": path, "name": path.rsplit("/", 1)[-1], "digest": digest,
+            stack = {"path": path, "name": project_name(path, files), "digest": digest,
                      "files": {n: base64.b64encode(b).decode() for n, b in files.items()},
                      "env": env_text(env)}
             # Adopted: it lives in its own folder on the host (see adopt.py).
             where = self.settings.get("stack.dir." + path)
             if where:
                 stack["dir"] = where
+            held = running_elsewhere(stack, report)
+            if held:
+                stack["held"] = held
             out.append(stack)
         return out
 
@@ -384,16 +419,19 @@ class Deploys:
         for c in companions:
             reported = {d["path"]: d for d in ((c.get("report") or {}).get("deploys") or [])}
             stacks = []
-            for s in self.stacks_for(c["name"]):
+            for s in self.stacks_for(c["name"], c.get("report")):
                 r = reported.get(s["path"])
                 if c["read_only"]:
                     status = "read_only"
+                elif s.get("held"):
+                    status = "link"
                 elif r is None or r.get("digest") != s["digest"]:
                     status = "pending"
                 else:
                     status = {"ok": "deployed"}.get(r.get("result"), r.get("result", "pending"))
                 stacks.append({"path": s["path"], "name": s["name"], "digest": s["digest"],
-                               "status": status, "detail": (r or {}).get("detail", ""),
+                               "status": status, "held": s.get("held"),
+                               "detail": (r or {}).get("detail", ""),
                                "at": (r or {}).get("at"),
                                "secrets": sorted(self.env(s["path"]))})
             out.append({"companion": c["name"], "stacks": stacks})
