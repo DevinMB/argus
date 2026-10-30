@@ -37,7 +37,20 @@ jobs:
       - name: Smoke test
         run: |
           mkdir -p cfg && printf 'checks:\n  - {name: self, kind: tcp, target: "127.0.0.1:8080", interval: 10}\n' > cfg/argus.yml
-          docker run -d --name argus -p 8080:8080 -v "$PWD/cfg:/config:ro" -e ARGUS_DB=/tmp/argus.db argus:ci
+          # A deploy repo as a folder: the runner (enrolled below) runs one stack.
+          mkdir -p deploy/hosts deploy/sites/ci/hello && echo sites/ci/hello > deploy/hosts/runner
+          cat > deploy/sites/ci/hello/compose.yml <<'EOF'
+          services:
+            hello:
+              image: busybox:1.37
+              command: ["sh", "-c", "echo \"$$GREETING\" > /www/index.html && httpd -f -p 8099 -h /www"]
+              environment: {GREETING: "${GREETING}"}
+              tmpfs: [/www]
+              ports: ["8099:8099"]
+              healthcheck: {test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8099/"], interval: 2s, retries: 10}
+          EOF
+          docker run -d --name argus -p 8080:8080 -v "$PWD/cfg:/config:ro" -v "$PWD/deploy:/deploy:ro" \
+            -e ARGUS_DEPLOY_DIR=/deploy -e ARGUS_DB=/tmp/argus.db argus:ci
           for _ in $(seq 30); do curl -skf https://localhost:8080/healthz && break; sleep 1; done
           sleep 12
           curl -skf https://localhost:8080/metrics | grep 'argus_check_up{check="self"' | grep ' 1.0$'
@@ -79,6 +92,29 @@ jobs:
           jq -e '.companions[0].report.containers | map(.name) | index("argus")' hosts.json
           jq -e '.companions[0].report.disks | map(.mount) | index("/")' hosts.json
           systemctl is-active argus-companion
+
+          # Deploys: a secret set in Argus reaches the stack's .env on the host.
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' -X PUT \
+            -d '{"path":"sites/ci/hello","env":{"GREETING":"hello from argus"}}' \
+            https://localhost:8080/api/deploys/secrets
+          for _ in $(seq 60); do
+            curl -s localhost:8099/ | grep -q 'hello from argus' && break; sleep 3
+          done
+          curl -s localhost:8099/ | grep 'hello from argus'
+          sudo stat -c '%a' /var/lib/argus-companion/stacks/hello/.env | grep -qx 600
+          for _ in $(seq 30); do
+            curl -sk https://localhost:8080/api/companions | jq -e '.companions[0].stacks[0].status == "deployed"' && break; sleep 3
+          done
+          # The host's policy refuses a privileged stack before anything changes.
+          sed -i 's/^  hello:$/  hello:\n    privileged: true/' deploy/sites/ci/hello/compose.yml
+          grep -q 'privileged: true' deploy/sites/ci/hello/compose.yml
+          for _ in $(seq 60); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].stacks[0].status == "refused"' hosts.json >/dev/null && break; sleep 3
+          done
+          jq '.companions[0].stacks[0] | {status, detail}' hosts.json
+          jq -e '.companions[0].stacks[0].detail | contains("privileged")' hosts.json
+          curl -s localhost:8099/ | grep -q 'hello from argus'  # the running stack is untouched
           # Removing the host revokes its token: the companion says so in its log.
           id=$(jq -r '.companions[0].id' hosts.json)
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X DELETE https://localhost:8080/api/companions/$id

@@ -54,6 +54,9 @@ elif [ ! -f "$CONF" ]; then
   exit 1
 fi
 
+# What this host will never run, whatever Argus says: edit it here, on the host.
+[ -f /etc/argus-companion/policy.json ] || "$BIN" policy > /etc/argus-companion/policy.json
+
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   cat > /etc/systemd/system/argus-companion.service <<'UNIT'
 [Unit]
@@ -65,7 +68,10 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/argus-companion run --config /etc/argus-companion/companion.json
 Restart=always
 RestartSec=10
-# It reads the system and Docker's API; it writes nothing on the host (M2).
+# It writes only its own folder: stacks it deploys live in /var/lib/argus-companion.
+StateDirectory=argus-companion
+StateDirectoryMode=0700
+Environment=DOCKER_CONFIG=/var/lib/argus-companion/docker
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only

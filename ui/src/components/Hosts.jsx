@@ -160,6 +160,74 @@ function Disks({ disks }) {
   );
 }
 
+const STACK = {
+  deployed: ["up", "deployed"], pending: ["failing", "deploying"], failed: ["down", "failed"],
+  refused: ["down", "refused by policy"], rolled_back: ["down", "rolled back"],
+  read_only: ["unknown", "not deployed: monitoring only"],
+};
+
+// A stack's secrets: names are shown, values are write-only.
+function Secrets({ stack, session, onSaved }) {
+  const [key, setKey] = useState("");
+  const [value, setValue] = useState("");
+  const [error, setError] = useState(null);
+  const change = async (env) => {
+    setError(null);
+    try {
+      await send("PUT", "/api/deploys/secrets", { path: stack.path, env }, session.csrf);
+      setKey(""); setValue("");
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="secrets">
+      {stack.secrets.length > 0 && (
+        <ul className="host-list">{stack.secrets.map((k) => (
+          <li key={k}><span className="dot dot-accent" /><span className="host-item mono">{k}</span>
+            <button className="link-button small" onClick={() => change({ [k]: null })}>remove</button></li>
+        ))}</ul>
+      )}
+      <form className="field-row" onSubmit={(e) => { e.preventDefault(); change({ [key]: value }); }}>
+        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="NAME" aria-label="Secret name"
+               pattern="[A-Za-z_][A-Za-z0-9_]*" required spellCheck="false" />
+        <input type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="value"
+               aria-label="Secret value" autoComplete="off" />
+        <button className="btn">Set</button>
+      </form>
+      <small className="muted">Written to the stack's .env on the host (root only). Changing one redeploys the stack.</small>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+function Stacks({ stacks, session, reload }) {
+  const [open, setOpen] = useState(null);
+  return (
+    <ul className="host-list">
+      {stacks.map((st) => {
+        const [tone, word] = STACK[st.status] ?? ["unknown", st.status];
+        return (
+          <li key={st.path} className="stack">
+            <span className={`dot dot-${tone}`} />
+            <span className="host-item">{st.name}</span>
+            <span className={`st-${tone} host-note`}>{word}</span>
+            <span className="muted host-sub mono">{st.path}{st.at ? ` · ${agoText(Date.now() / 1000 - st.at)}` : ""}</span>
+            {st.detail && st.status !== "deployed" && <pre className="host-wide log small">{st.detail}</pre>}
+            {session?.signed_in && (
+              <button className="link-button small host-wide secrets-toggle" onClick={() => setOpen(open === st.path ? null : st.path)}>
+                Secrets ({st.secrets.length})
+              </button>
+            )}
+            {open === st.path && <div className="host-wide"><Secrets stack={st} session={session} onSaved={reload} /></div>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function Host({ host, session, onRemoved }) {
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState(null);
@@ -187,6 +255,9 @@ function Host({ host, session, onRemoved }) {
       <p className="host-sentence">{hostSentence(host)}</p>
       {r && <p className="muted small">{[r.os, r.kernel, r.arch, r.version && `companion ${r.version}`, host.address].filter(Boolean).join(" · ")}</p>}
 
+      {host.stacks?.length > 0 && (
+        <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
+      )}
       {r?.containers && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} /></section>}
       {r?.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
       {r?.disks?.length > 0 && <section><h4 className="eyebrow">disks</h4><Disks disks={r.disks} /></section>}

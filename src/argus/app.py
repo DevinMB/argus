@@ -43,6 +43,7 @@ from argus.alerts import (
 )
 from argus.auth import COOKIE, SESSION_DAYS, Auth, AuthError, Session
 from argus.companions import REPORT_EVERY, EnrollError, Signer
+from argus.deploys import BRANCH, ENV_KEY, PULL_TOKEN, STACK, Deploys
 from argus.metrics import registry
 from argus.probes import Result
 from argus.runtime import Runtime
@@ -189,6 +190,16 @@ class Updates(BaseModel):
     error: str = Field("", max_length=300)
 
 
+class DeployResult(BaseModel):
+    """How the companion's newest attempt at one stack went."""
+
+    path: str = Field(max_length=300)
+    digest: str = Field("", max_length=64)
+    result: Literal["ok", "failed", "refused", "rolled_back"]
+    detail: str = Field("", max_length=2000)
+    at: float | None = None
+
+
 class RemoteResult(BaseModel):
     name: str = Field(max_length=64)
     ok: bool
@@ -212,6 +223,35 @@ class Report(BaseModel):
     updates: Updates | None = None
     reboot_required: bool | None = None
     checks: list[RemoteResult] = Field([], max_length=1000)
+    deploys: list[DeployResult] = Field([], max_length=200)
+
+
+class DeploySettings(BaseModel):
+    """Where deploys come from. Absent fields stay; an empty pull token clears it."""
+
+    model_config = ConfigDict(extra="forbid")
+    repo: str | None = Field(None, pattern=r"^$|^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
+    branch: str | None = Field(None, max_length=100, pattern=r"^$|^[A-Za-z0-9._/-]+$")
+    pull_token: str | None = Field(None, max_length=255,
+                                   pattern=r"^$|^(ghp_|github_pat_)[A-Za-z0-9_]{20,250}$")
+
+
+class StackSecrets(BaseModel):
+    """Changes to one stack's .env: a value sets a key, null removes it."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(max_length=300, pattern=STACK.pattern)
+    env: dict[str, str | None] = Field(max_length=200)
+
+    @field_validator("env")
+    @classmethod
+    def _keys(cls, v: dict[str, str | None]) -> dict[str, str | None]:
+        for k, val in v.items():
+            if not ENV_KEY.match(k):
+                raise ValueError(f"{k} is not a valid variable name")
+            if val is not None and len(val) > 8192:
+                raise ValueError(f"{k} is too long")
+        return v
 
 
 def session_of(request: Request) -> Session | None:
@@ -277,11 +317,15 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         app.state.rt, app.state.gh, app.state.gh_client = rt, gh, gh_client
         app.state.settings, app.state.auth, app.state.alerter = settings, auth, alerter
         app.state.signer, app.state.tls_pin = Signer(settings), tls_pin
+        folder = os.environ.get("ARGUS_DEPLOY_DIR")
+        deploys = Deploys(settings, gh, rt.clock, Path(folder) if folder else None)
+        app.state.deploys = alerter.deploys = deploys
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
         tasks = []
         if start_scheduler:
             tasks.append(asyncio.create_task(rt.run_forever()))
             tasks.append(asyncio.create_task(alerter.run_forever()))
+            tasks.append(asyncio.create_task(deploys.run_forever()))
             tasks.append(asyncio.create_task(github.run_forever(
                 gh, lambda: rt.config, lambda: set(settings.get(ghauth.HIDDEN, [])))))
         yield
@@ -541,14 +585,51 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         return Response(status_code=303,
                         headers={"Location": f"{app_['html_url']}/installations/new"})
 
+    # --- deploys ---
+
+    def deploy_view(request: Request) -> dict:
+        d, s = request.app.state.deploys, request.app.state.settings
+        src = d.source()
+        return {"source": src.describe() if src else None,
+                "repo": s.get("deploy.repo", ""), "branch": s.get(BRANCH, ""),
+                "commit": d.snapshot and d.snapshot.commit, "read_at": d.read_at,
+                "error": d.error, "pull_token_set": s.has_secret(PULL_TOKEN),
+                "hosts": d.snapshot.hosts if d.snapshot else {},
+                "connected": request.app.state.gh.connected}
+
+    @app.get("/api/deploys")
+    async def deploys_view(request: Request) -> dict:
+        return deploy_view(request)
+
+    @app.put("/api/deploys")
+    async def deploys_change(body: DeploySettings, request: Request, _: Admin) -> dict:
+        s = request.app.state.settings
+        if body.repo is not None:
+            s.set("deploy.repo", body.repo)
+        if body.branch is not None:
+            s.set(BRANCH, body.branch)
+        if body.pull_token is not None:
+            s.set_secret(PULL_TOKEN, body.pull_token or None)
+        await request.app.state.deploys.refresh()
+        return deploy_view(request)
+
+    @app.put("/api/deploys/secrets")
+    async def stack_secrets(body: StackSecrets, request: Request, _: Admin) -> dict:
+        d = request.app.state.deploys
+        d.set_env(body.path, body.env)
+        return {"path": body.path, "secrets": sorted(d.env(body.path))}
+
     # --- companions: the UI's side ---
 
     @app.get("/api/companions")
     async def companions(request: Request) -> dict:
         r = rt(request)
         views = r.companions.views()
+        stacks = {d["companion"]: d["stacks"]
+                  for d in request.app.state.deploys.views(views)}
         for v in views:
             v["checks"] = [check_view(r, c) for c in r.companion_checks(v["name"])]
+            v["stacks"] = stacks.get(v["name"], [])
         named = {c.companion for c in r.config.checks if c.companion}
         return {"companions": views, "report_every": REPORT_EVERY, "now": r.clock(),
                 "tls_pin": request.app.state.tls_pin is not None,
@@ -615,14 +696,23 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             r.record_remote(row["name"], c.name, Result(c.ok, c.duration, c.error))
         r.companions.save_report(row["id"], rep.model_dump(exclude={"nonce", "checks"}),
                                  address(request))
-        reply = json.dumps({
+        body = {
             "name": row["name"],
             "report_every": REPORT_EVERY,
             "read_only": bool(row["read_only"]),
             "checks": [c.model_dump(include={"name", "kind", "target", "interval", "timeout",
                                              "expect_status", "verify_tls"})
                        for c in r.companion_checks(row["name"])],
-        }, separators=(",", ":")).encode()
+        }
+        d = request.app.state.deploys
+        if not row["read_only"] and d.snapshot is not None:
+            stacks = d.stacks_for(row["name"])
+            done = {(x.path, x.digest) for x in rep.deploys if x.result == "ok"}
+            # A pull credential only when something is about to be deployed.
+            due = any((s["path"], s["digest"]) not in done for s in stacks)
+            body["deploy"] = {"commit": d.snapshot.commit, "stacks": stacks,
+                              "pull": await d.pull_credential() if due else None}
+        reply = json.dumps(body, separators=(",", ":")).encode()
         sig = request.app.state.signer.sign(row["id"], rep.nonce, reply)
         return Response(reply, media_type="application/json",
                         headers={"X-Argus-Signature": sig})

@@ -139,6 +139,68 @@ function Repos({ session, view, onView, setError }) {
   );
 }
 
+// Where deploys come from: one repo with hosts/<host> files listing stack folders.
+function Deploys({ session, view, setError }) {
+  const [d, setD] = useState(null);
+  const [token, setToken] = useState("");
+  useEffect(() => { send("GET", "/api/deploys").then(setD, (e) => setError(e.message)); }, [setError]);
+  if (!d) return null;
+  const save = async (body) => {
+    setError(null);
+    try {
+      setD(await send("PUT", "/api/deploys", body, session.csrf));
+      setToken("");
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const folder = d.source?.kind === "folder";
+  const hosts = Object.entries(d.hosts ?? {});
+  return (
+    <div className="panel">
+      <h2 className="eyebrow">Deploys</h2>
+      <p className="muted">
+        One repo says what each host runs: <code>hosts/&lt;host&gt;</code> lists stack folders, and each
+        folder holds a <code>compose.yml</code>. A host's companion deploys its stacks when they change,
+        within the host's own policy.
+      </p>
+      {folder ? (
+        <p>From the folder <code>{d.source.where}</code> (ARGUS_DEPLOY_DIR).</p>
+      ) : (
+        <label className="field">
+          <span>Deploy repo</span>
+          <select value={d.repo} onChange={(e) => save({ repo: e.target.value })}>
+            <option value="">None: no deploys</option>
+            {view.repos.filter((r) => !r.archived).map((r) => <option key={r.full_name}>{r.full_name}</option>)}
+          </select>
+        </label>
+      )}
+      {d.error && <p className="form-error">{d.error}</p>}
+      {d.commit && (
+        <p className="small">
+          At {d.commit}, read {agoText(Date.now() / 1000 - d.read_at)}.{" "}
+          {hosts.length ? hosts.map(([h, s]) => `${h}: ${s.length}`).join(" · ") : "No hosts/ files yet."}
+        </p>
+      )}
+      <form className="field" onSubmit={(e) => { e.preventDefault(); save({ pull_token: token }); }}>
+        <span>Private images</span>
+        <small>
+          {view.source === "app"
+            ? "Hosts pull with a short-lived token from the app. If the registry refuses it, save a read token here instead."
+            : "Hosts pull with this token, sent only with a deploy and never stored on the host."}{" "}
+          A classic token with only <code>read:packages</code>.
+        </small>
+        <div className="field-row">
+          <input type="password" value={token} onChange={(e) => setToken(e.target.value.trim())} autoComplete="off"
+                 placeholder={d.pull_token_set ? "saved; paste a new one to replace it" : "ghp_…"} aria-label="Registry read token" />
+          <button className="btn" disabled={!token}>Save</button>
+          {d.pull_token_set && <button className="btn" type="button" onClick={() => save({ pull_token: "" })}>Remove</button>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function GitHubPage({ session }) {
   const [view, setView] = useState(null);
   const [error, setError] = useState(null);
@@ -223,6 +285,7 @@ export default function GitHubPage({ session }) {
 
       {view.source !== "app" && <Connect session={session} setError={setError} />}
       {view.source !== "app" && <PasteToken session={session} view={view} onView={setView} setError={setError} />}
+      {view.source !== "none" && <Deploys session={session} view={view} setError={setError} />}
       {view.source !== "none" && <Repos session={session} view={view} onView={setView} setError={setError} />}
     </section>
   );

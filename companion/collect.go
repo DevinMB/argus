@@ -21,21 +21,22 @@ import (
 // Report is the host's state, sent once a minute. Fields the host cannot tell
 // (no Docker, no systemd) are left out rather than reported as empty.
 type Report struct {
-	Nonce          string        `json:"nonce"`
-	Version        string        `json:"version"`
-	Hostname       string        `json:"hostname"`
-	OS             string        `json:"os"`
-	Kernel         string        `json:"kernel"`
-	Arch           string        `json:"arch"`
-	Uptime         float64       `json:"uptime"`
-	ReadOnly       bool          `json:"read_only"`
-	Containers     []Container   `json:"containers"` // null: no Docker here
-	DockerError    string        `json:"docker_error,omitempty"`
-	FailedUnits    []string      `json:"failed_units"` // null: no systemd
-	Disks          []Disk        `json:"disks"`
-	Updates        *Updates      `json:"updates,omitempty"`
-	RebootRequired *bool         `json:"reboot_required,omitempty"`
-	Checks         []CheckResult `json:"checks"`
+	Nonce          string         `json:"nonce"`
+	Version        string         `json:"version"`
+	Hostname       string         `json:"hostname"`
+	OS             string         `json:"os"`
+	Kernel         string         `json:"kernel"`
+	Arch           string         `json:"arch"`
+	Uptime         float64        `json:"uptime"`
+	ReadOnly       bool           `json:"read_only"`
+	Containers     []Container    `json:"containers"` // null: no Docker here
+	DockerError    string         `json:"docker_error,omitempty"`
+	FailedUnits    []string       `json:"failed_units"` // null: no systemd
+	Disks          []Disk         `json:"disks"`
+	Updates        *Updates       `json:"updates,omitempty"`
+	RebootRequired *bool          `json:"reboot_required,omitempty"`
+	Checks         []CheckResult  `json:"checks"`
+	Deploys        []DeployResult `json:"deploys"`
 }
 
 type Container struct {
@@ -106,7 +107,7 @@ func (c *Collector) Collect(readOnly bool) *Report {
 	host, _ := os.Hostname()
 	r := &Report{Version: version, Hostname: host, Arch: runtime.GOARCH, ReadOnly: readOnly,
 		OS: osName(c.OSRelease), Kernel: firstLine("/proc/sys/kernel/osrelease"),
-		Disks: []Disk{}, Checks: []CheckResult{}}
+		Disks: []Disk{}, Checks: []CheckResult{}, Deploys: []DeployResult{}}
 	if up := firstLine("/proc/uptime"); up != "" {
 		r.Uptime, _ = strconv.ParseFloat(strings.Fields(up)[0], 64)
 	}

@@ -618,3 +618,8 @@ code { font: 12.5px var(--mono); background: var(--raise); border-radius: 4px; p
 .repo-list strong { font-weight: 600; word-break: break-all; }
 details.panel > summary { cursor: pointer; }
 details.panel[open] > summary { margin-bottom: 10px; }
+.stack .log { margin: 4px 0 0; max-height: 8em; overflow: auto; white-space: pre-wrap; }
+.secrets { display: grid; gap: 6px; margin-top: 6px; }
+.secrets .field-row input { min-width: 0; }
+.host-wide { grid-column: 2 / -1; min-width: 0; }
+.secrets-toggle { justify-self: start; margin-left: 0; }
