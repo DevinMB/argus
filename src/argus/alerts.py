@@ -195,6 +195,7 @@ class Alerter:
         """The public part, for /api/info: who sends and whether anything watches Argus."""
         return {"sender": self.sender(),
                 "ready": self.sender() == "prometheus" or self.channel() is not None,
+                "tested": self.settings.get("alerts.test_ok_at") is not None,
                 "watched": self.settings.has_secret(WATCH_URL)}
 
     # --- what is wrong right now ---

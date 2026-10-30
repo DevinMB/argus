@@ -9,6 +9,7 @@ import SignIn from "./components/SignIn.jsx";
 import CheckDrawer from "./components/CheckDrawer.jsx";
 import CheckGrid from "./components/CheckGrid.jsx";
 import Asides from "./components/Asides.jsx";
+import GetStarted, { coverageLine } from "./components/GetStarted.jsx";
 import Heartbeats from "./components/Heartbeats.jsx";
 import Hosts from "./components/Hosts.jsx";
 import Jobs from "./components/Jobs.jsx";
@@ -109,13 +110,19 @@ export default function App() {
   const locked = session?.view_requires_login && !session.signed_in;
   const settingsView = ["alerts", "account", "github", "config"].includes(view);
   // Editing checks: the form, and whether this config can be edited here at all.
-  const [editing, setEditing] = useState(null); // null, "new" or a check
+  const [editing, setEditing] = useState(null); // null, "new", {initial} or a check
   const [editable, setEditable] = useState(false);
   const [saved, setSaved] = useState(null);
   useEffect(() => {
     if (!session?.signed_in) return setEditable(false);
     send("GET", "/api/config").then((c) => setEditable(c.editable), () => setEditable(false));
   }, [session?.signed_in, view]);
+  // "Watch" on the Hosts page: open the Checks page with the form filled in.
+  useEffect(() => {
+    const on = (e) => { setSaved(null); setEditing({ initial: e.detail }); };
+    window.addEventListener("argus-watch", on);
+    return () => window.removeEventListener("argus-watch", on);
+  }, []);
   const afterSave = (out) => {
     setEditing(null);
     setSaved(savedText(out));
@@ -186,12 +193,17 @@ export default function App() {
       {!locked && !settingsView && !data && !error && <p className="muted pad">Loading…</p>}
       {!locked && !settingsView && !data && error && <p className="banner banner-error">Cannot reach the Argus API: {error}</p>}
 
-      {!locked && data && view === "hosts" && <Hosts data={data.companions} session={session} reload={reload} />}
+      {!locked && data && view === "hosts" && <Hosts data={data.companions} session={session} reload={reload} start={data.start} />}
 
       {!locked && data && view === "updates" && <Updates updates={data.updates} now={now} focus={focus} />}
 
       {!locked && data && view === "checks" && (
         <>
+          {session?.signed_in && editable && (
+            <GetStarted start={data.start} session={session} reload={reload}
+                        onWatch={(c) => { setSaved(null); setEditing({ initial: c }); }}
+                        onAddCheck={() => { setSaved(null); setEditing("new"); }} />
+          )}
           <section className="hero">
             <div className="eye">
               <Ring checks={checks} siteOrder={siteOrder} onPick={select} />
@@ -208,7 +220,7 @@ export default function App() {
               <h1>{headline(sum)}</h1>
               {checks.length ? (
                 <p className="lede">
-                  {checks.length} checks every minute{acrossSites(siteOrder.length)}, covering{" "}
+                  {checks.length} check{checks.length === 1 ? "" : "s"} every minute{acrossSites(siteOrder.length)}, covering{" "}
                   {joinList(groupChecks(checks).map(([g]) => data.info.groups?.[g] ?? g))}. Three
                   failures in a row and a check is down; the critical ones page you.
                 </p>
@@ -220,6 +232,7 @@ export default function App() {
                   Meanwhile, <a href="#/alerts">set up alerts</a> so Argus can reach you.
                 </p>
               )}
+              {coverageLine(data.start?.coverage) && <p className="coverage small">{coverageLine(data.start.coverage)}{data.start.suggestions.length > 0 && <> · <a href="#/hosts">{data.start.suggestions.length} to watch</a></>}</p>}
               <Asides checks={checks} heartbeats={data.heartbeats} alerts={data.info.alerts} />
               <div className="meters">
                 {manySites && siteOrder.map((s) => {
@@ -264,7 +277,8 @@ export default function App() {
 
           {saved && <p className="form-ok" role="status">{saved}</p>}
           {editing && (
-            <CheckForm session={session} check={editing === "new" ? null : editing} sites={sites}
+            <CheckForm session={session} check={editing === "new" || editing.initial ? null : editing}
+                       initial={editing.initial} sites={sites}
                        groups={groupChecks(checks).map(([g]) => g)}
                        hosts={(data.companions?.companions ?? []).map((h) => h.name)}
                        onDone={afterSave} onCancel={() => setEditing(null)} />

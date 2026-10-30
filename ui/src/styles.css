@@ -633,3 +633,19 @@ textarea.yaml {
   border: 1px solid var(--line); border-radius: 6px; padding: 10px; resize: vertical; tab-size: 2;
 }
 .banner, .form-error, .form-ok { overflow-wrap: anywhere; }
+
+/* getting started */
+.start { margin: 24px 0 0; gap: 10px; }
+.start-head { display: flex; align-items: baseline; gap: 12px; }
+.start-head h2 { margin: 0; font-size: 18px; }
+.start-head .link-button { margin-left: auto; }
+.start-steps { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
+.start-steps li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; }
+.start-steps li .dot { margin-top: 7px; }
+.start-done strong { color: var(--muted); text-decoration: line-through; font-weight: 500; }
+.start-next p { margin: 4px 0 8px; }
+.suggest { margin: 6px 0; }
+.suggest li { grid-template-columns: auto minmax(0, 1fr) auto; }
+.coverage { color: var(--muted); margin: -16px 0 24px; }  /* between the lede and the asides */
+.start-title { margin: 0; text-align: left; text-decoration: none; }
+.start-title:disabled { cursor: default; }

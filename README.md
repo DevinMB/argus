@@ -17,6 +17,10 @@ Open https://localhost:8080 (the certificate is Argus's own, so the browser warn
 - `ARGUS_TLS=off` serves plain HTTP (behind a proxy); `ARGUS_TLS_CERT` and `ARGUS_TLS_KEY` use your own certificate.
 - Forgot the password: `docker exec argus python -m argus reset-login`.
 
+## Getting started
+
+A new install shows a short checklist on its home page: make sure alerts reach you, add a host, watch what matters, connect GitHub, deploy from git. One step is open at a time, with a line on why it matters and one button. Once a host reports, Argus suggests a check for each port its containers publish ("jellyfin :8096 on nas"); **Watch** fills in the form. Afterwards a coverage line ("12 of 15 published services watched · 4 of 4 hosts reporting") and each host's "not watched yet" list show what to do next. The checklist can be hidden.
+
 ## Config
 
 Everything Argus watches is one YAML file, `argus.yml`. Change single checks on the Checks page (**Add a check**, or **Change** in a check's panel), or the whole file on the Config page. Argus checks every change before saving; a mistake is shown and nothing changes. Comments and layout in the file are kept: an edit changes only its own lines.

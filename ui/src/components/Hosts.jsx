@@ -228,7 +228,7 @@ function Stacks({ stacks, session, reload }) {
   );
 }
 
-function Host({ host, session, onRemoved }) {
+function Host({ host, session, onRemoved, suggestions, onWatch }) {
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState(null);
   const r = host.report;
@@ -259,6 +259,16 @@ function Host({ host, session, onRemoved }) {
         <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
       )}
       {r?.containers && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} /></section>}
+      {suggestions?.length > 0 && (
+        <section>
+          <h4 className="eyebrow">not watched yet</h4>
+          <ul className="host-list suggest">{suggestions.map((g) => (
+            <li key={g.port}><span className="dot dot-unknown" />
+              <span className="host-item">{g.container} <span className="muted mono">:{g.port}</span></span>
+              {session?.signed_in && <button className="btn" onClick={() => onWatch(g.check)}>Watch</button>}</li>
+          ))}</ul>
+        </section>
+      )}
       {r?.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
       {r?.disks?.length > 0 && <section><h4 className="eyebrow">disks</h4><Disks disks={r.disks} /></section>}
       {r?.failed_units?.length > 0 && (
@@ -313,7 +323,7 @@ function Host({ host, session, onRemoved }) {
   );
 }
 
-export default function Hosts({ data, session, reload }) {
+export default function Hosts({ data, session, reload, start }) {
   const [adding, setAdding] = useState(false);
   const hosts = data?.companions ?? [];
   const quiet = hosts.filter((h) => h.status === "quiet").length;
@@ -342,7 +352,11 @@ export default function Hosts({ data, session, reload }) {
         </p>
       )}
       <div className="hosts">
-        {hosts.map((h) => <Host key={h.id} host={h} session={session} onRemoved={reload} />)}
+        {hosts.map((h) => (
+          <Host key={h.id} host={h} session={session} onRemoved={reload}
+                suggestions={(start?.suggestions ?? []).filter((g) => g.host === h.name)}
+                onWatch={(c) => { window.location.hash = ""; window.dispatchEvent(new CustomEvent("argus-watch", { detail: c })); }} />
+        ))}
       </div>
     </section>
   );

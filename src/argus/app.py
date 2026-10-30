@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from argus import configsrc, ghauth, github
+from argus import configsrc, ghauth, github, start
 from argus.alerts import (
     ALERTMANAGER_EXAMPLE,
     TOKEN,
@@ -174,6 +174,7 @@ class Container(BaseModel):
     health: str = Field("", max_length=40)  # healthy, unhealthy, starting, or none
     status: str = Field("", max_length=200)  # Docker's words: "Up 3 hours (healthy)"
     project: str = Field("", max_length=200)  # the compose project, if any
+    ports: list[int] = Field([], max_length=100)  # published TCP ports
 
 
 class Disk(BaseModel):
@@ -261,6 +262,11 @@ class ConfigEntry(BaseModel):
     entry: dict = Field(max_length=40)
     replace: str | None = Field(None, max_length=64)
     base: str = Field(max_length=64)
+
+
+class StartHidden(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    hidden: bool
 
 
 class StackSecrets(BaseModel):
@@ -702,6 +708,21 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                     s.set(k, v)
                 raise
         return src.view()
+
+    # --- getting started ---
+
+    @app.get("/api/start")
+    async def get_started(request: Request) -> dict:
+        r, st = rt(request), request.app.state
+        companions = r.companions.views()
+        return start.view(rt=r, alerts=st.alerter.summary(), gh_connected=st.gh.connected,
+                          deploy_views=st.deploys.views(companions), companions=companions,
+                          hidden=st.settings.get(start.HIDDEN, False))
+
+    @app.put("/api/start")
+    async def hide_start(body: StartHidden, request: Request, _: Admin) -> dict:
+        request.app.state.settings.set(start.HIDDEN, body.hidden)
+        return await get_started(request)
 
     # --- deploys ---
 

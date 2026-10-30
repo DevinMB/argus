@@ -50,15 +50,16 @@ export function useArgus() {
       clearTimeout(timer.current);
       ctrl = new AbortController();
       try {
-        const [info, checks, heartbeats, updates, jobs, companions] = await Promise.all([
+        const [info, checks, heartbeats, updates, jobs, companions, start] = await Promise.all([
           getJSON("/api/info", ctrl.signal),
           getJSON("/api/checks", ctrl.signal),
           getJSON("/api/heartbeats", ctrl.signal),
           getJSON("/api/updates", ctrl.signal),
           getJSON("/api/jobs", ctrl.signal),
           getJSON("/api/companions", ctrl.signal),
+          getJSON("/api/start", ctrl.signal),
         ]);
-        setData({ info, checks, heartbeats, updates, jobs, companions });
+        setData({ info, checks, heartbeats, updates, jobs, companions, start });
         setError(null);
         setFetchedAt(Date.now());
       } catch (e) {

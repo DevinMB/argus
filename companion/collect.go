@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -46,6 +47,7 @@ type Container struct {
 	Health  string `json:"health"`
 	Status  string `json:"status"`
 	Project string `json:"project"`
+	Ports   []int  `json:"ports"` // published TCP ports on the host
 }
 
 type Disk struct {
@@ -196,6 +198,10 @@ func parseContainers(body []byte) ([]Container, error) {
 		State  string
 		Status string
 		Labels map[string]string
+		Ports  []struct {
+			PublicPort int
+			Type       string
+		}
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("docker: %w", err)
@@ -206,9 +212,16 @@ func parseContainers(body []byte) ([]Container, error) {
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
+		ports := []int{}
+		for _, p := range c.Ports {
+			if p.PublicPort > 0 && p.Type == "tcp" && !slices.Contains(ports, p.PublicPort) {
+				ports = append(ports, p.PublicPort) // IPv4 and IPv6 list each port twice
+			}
+		}
+		slices.Sort(ports)
 		out = append(out, Container{Name: name, Image: c.Image, State: c.State,
 			Health: healthOf(c.Status), Status: c.Status,
-			Project: c.Labels["com.docker.compose.project"]})
+			Project: c.Labels["com.docker.compose.project"], Ports: ports})
 	}
 	return out, nil
 }
