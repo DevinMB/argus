@@ -208,10 +208,10 @@ class Alerter:
         where = (lambda site: f" ({rt.config.sites.get(site, site)})") if many else (lambda _: "")
         out: dict[str, Problem] = {}
         if rules["checks"]:
-            states = rt.store.all()
+            states, paused = rt.store.all(), rt.store.pauses()
             for c in rt.config.checks:
                 s = states.get(c.name)
-                if c.severity == "critical" and s and s.status == "down":
+                if c.severity == "critical" and s and s.status == "down" and c.name not in paused:
                     out[f"check:{c.name}"] = Problem(
                         f"{c.name}{where(c.site)} is down",
                         f"{c.kind} {c.target}: {s.last_error or 'failed'}",
@@ -314,7 +314,9 @@ class Alerter:
 
         if channel is None:
             return
-        told = [r for r in cleared if r["notified"]]
+        # Pausing a check is not its recovery: no "resolved" for it.
+        paused = {f"check:{n}" for n in self.rt.store.pauses()}
+        told = [r for r in cleared if r["notified"] and r["key"] not in paused]
         if told:
             # One try: a missed "resolved" is not worth holding the table for.
             if len(told) == 1:
@@ -459,7 +461,7 @@ groups:
           description: "Argus answers but runs no checks. Restart its container."
 
       - alert: ArgusCheckDown
-        expr: argus_check_up == 0
+        expr: argus_check_up == 0 unless on (check) argus_check_paused == 1
         for: 1m
         annotations:
           summary: "{{{{ $labels.check }}}} is down"

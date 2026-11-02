@@ -3,6 +3,11 @@ nor resets the failure count that decides one.
 
 A check is `up` after any success, `failing` after 1 or 2 consecutive failures,
 and `down` from the third. `unknown` means no result yet.
+
+A check can be paused by its owner ("I know it is down"): it keeps running, but
+shows as paused, never pages, and stays out of every count of problems. A pause
+ends when the owner resumes it or, by default, when the check is back up after
+having been down during the pause.
 """
 
 from __future__ import annotations
@@ -41,7 +46,12 @@ CREATE TABLE IF NOT EXISTS job_runs (
     result TEXT NOT NULL, summary TEXT NOT NULL, log TEXT NOT NULL, source TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS job_runs_name ON job_runs (name, id);
+CREATE TABLE IF NOT EXISTS pauses (
+    name TEXT PRIMARY KEY, reason TEXT NOT NULL, since REAL NOT NULL,
+    until TEXT NOT NULL, seen_down INTEGER NOT NULL
+);
 """
+PAUSE_UNTIL = ("up", "resumed")  # back up after being down, or only by hand
 
 
 @dataclass(frozen=True)
@@ -90,6 +100,7 @@ class Store:
             status = "down" if failures >= DOWN_AFTER else "failing"
             last_ok = prev.last_ok
         changed = status != prev.status
+        pause = self.pause_of(name)
         state = CheckState(
             name=name,
             status=status,
@@ -116,7 +127,47 @@ class Store:
                     "DELETE FROM transitions WHERE id <= (SELECT MAX(id) FROM transitions) - ?",
                     (KEEP_TRANSITIONS,),
                 )
+            if pause and status != "up" and status != "unknown":
+                self.db.execute("UPDATE pauses SET seen_down = 1 WHERE name = ?", (name,))
+            elif pause and status == "up" and pause["seen_down"] and pause["until"] == "up":
+                self.db.execute("DELETE FROM pauses WHERE name = ?", (name,))
+                self._note(name, now, "paused", "up", "resumed on its own: back up")
         return state
+
+    def _note(self, name: str, ts: float, frm: str, to: str, text: str) -> None:
+        self.db.execute("INSERT INTO transitions (name, ts, from_status, to_status, error)"
+                        " VALUES (?, ?, ?, ?, ?)", (name, ts, frm, to, text))
+
+    # --- pauses ---
+
+    def pause_of(self, name: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM pauses WHERE name = ?", (name,)).fetchone()
+        return dict(row) if row else None
+
+    def pauses(self) -> dict[str, dict]:
+        return {r["name"]: dict(r) for r in self.db.execute("SELECT * FROM pauses")}
+
+    def pause(self, name: str, reason: str, until: str, now: float) -> dict:
+        """Pause a check. Pausing one already paused changes its reason and end."""
+        assert until in PAUSE_UNTIL
+        status = self.get(name).status
+        old = self.pause_of(name)
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO pauses VALUES (?, ?, ?, ?, ?)",
+                (name, reason, old["since"] if old else now, until,
+                 old["seen_down"] if old else int(status in ("failing", "down"))))
+            if old is None:
+                self._note(name, now, status, "paused", reason)
+        return self.pause_of(name)
+
+    def resume(self, name: str, now: float) -> bool:
+        if self.pause_of(name) is None:
+            return False
+        with self.db:
+            self.db.execute("DELETE FROM pauses WHERE name = ?", (name,))
+            self._note(name, now, "paused", self.get(name).status, "resumed")
+        return True
 
     def transitions(self, name: str, limit: int = 50) -> list[dict]:
         rows = self.db.execute(
@@ -187,7 +238,7 @@ class Store:
     def prune(self, keep: set[str]) -> None:
         """Forget checks, heartbeats and jobs that left the config."""
         with self.db:
-            for table in ("checks", "heartbeats", "transitions", "job_runs"):
+            for table in ("checks", "heartbeats", "transitions", "job_runs", "pauses"):
                 names = {r[0] for r in self.db.execute(f"SELECT DISTINCT name FROM {table}")}
                 for gone in names - keep:
                     self.db.execute(f"DELETE FROM {table} WHERE name = ?", (gone,))

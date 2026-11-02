@@ -441,7 +441,8 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
     """The steps a change takes from update PR to healthy, for the newest change on main.
 
     Statuses: done, running, waiting (for the owner), failed, pending (an earlier
-    step has not finished), not_wired (that part of the pipeline does not exist yet).
+    step has not finished), not_wired (that part of the pipeline does not exist yet),
+    paused (its check is paused by the owner).
     A repo deployed by its own timer (`deploy`, a heartbeat) has no tag bump; one
     deployed by nothing (a library shipped inside another app) ends at the build.
     `placed` is v2's way: the deploy repo's stacks that run the repo's images,
@@ -564,6 +565,10 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
         add("healthy", "not_wired", "No check linked in argus.yml")
     elif (stack is not None or deploy or placed) and not deployed:
         add("healthy", "pending", f"{check['name']} is {check['status']} on the previous deploy")
+    elif check["status"] == "paused":
+        why = (check.get("paused") or {}).get("reason")
+        add("healthy", "paused", f"{check['name']} is paused{': ' + why if why else ''}",
+            at=(check.get("paused") or {}).get("since"))
     elif check["status"] == "up":
         add("healthy", "done", f"{check['name']} is up, with no failure since",
             at=check.get("last_change"))

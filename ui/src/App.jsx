@@ -18,7 +18,7 @@ import Ring from "./components/Ring.jsx";
 import Updates from "./components/Updates.jsx";
 import { acrossSites, ago, agoText, byStatus, filterChecks, groupChecks, headline, joinList, lifecycle, siteName, siteNote, summarize } from "./lib.js";
 
-const STATUS_FILTERS = [["all", "All"], ["problems", "Problems"], ["up", "Up"]];
+const STATUS_FILTERS = [["all", "All"], ["problems", "Problems"], ["up", "Up"], ["paused", "Paused"]];
 
 // The view and the selected check live in the hash (#/updates, #/updates/<repo>,
 // #/hosts, #/alerts, #/account, #/github, #/config, #/check/<name>) so a link can open any of them. A
@@ -102,7 +102,9 @@ export default function App() {
   );
   const shown = useMemo(() => filterChecks(checks, { status, site, q, sites }), [checks, status, site, q, sites]);
   const siteSum = (s) => summarize(checks.filter((c) => c.site === s));
-  const critical = checks.filter((c) => c.severity === "critical");
+  // A paused check pages nobody, so it is not among them.
+  const critical = checks.filter((c) => c.severity === "critical" && c.status !== "paused");
+  const pausedCritical = checks.filter((c) => c.severity === "critical" && c.status === "paused").length;
   const stalled = data && now - data.info.last_tick > 30;
   const needYou = (data?.updates?.repos ?? []).filter((r) => lifecycle(r).you).length;
   const alertsUnset = data?.info.alerts && !data.info.alerts.ready;
@@ -249,7 +251,8 @@ export default function App() {
                                 sub={siteNote(ss)} />;
                 })}
                 <Meter label="Pages if down" value={critical.filter((c) => c.status === "up").length}
-                       total={critical.length} tone="accent" sub="critical checks up" />
+                       total={critical.length} tone="accent"
+                       sub={`critical checks up${pausedCritical ? `, ${pausedCritical} paused` : ""}`} />
               </div>
             </div>
           </section>
@@ -324,7 +327,8 @@ export default function App() {
         <div className="foot-note">Checks live in argus.yml; alerts and access are set here, behind the admin password.</div>
       </footer>
 
-      {selected && <CheckDrawer name={selected} now={now} sites={sites} onClose={() => select(null)}
+      {selected && <CheckDrawer name={selected} now={now} sites={sites} csrf={session?.signed_in ? session.csrf : undefined}
+                                onChanged={reload} onClose={() => select(null)}
                                 onEdit={editable ? (c) => { select(null); setSaved(null); setEditing(c); } : undefined}
                                 onRemove={removeCheck} />}
     </div>

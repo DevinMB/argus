@@ -51,16 +51,23 @@ class Collector:
         last = GaugeMetricFamily(
             "argus_check_last_run_timestamp_seconds", "When the check last ran.", labels=LABELS
         )
+        paused = GaugeMetricFamily(
+            "argus_check_paused",
+            "1 while the check's owner has paused it (it does not page), else 0.",
+            labels=LABELS,
+        )
+        pauses = rt.store.pauses()
         for c in rt.config.checks:
             s = states.get(c.name)
+            lv = [c.name, c.kind, c.group, c.site, c.severity, c.target]
+            paused.add_metric(lv, 1 if c.name in pauses else 0)
             if s is None or s.last_run is None:
                 continue
-            lv = [c.name, c.kind, c.group, c.site, c.severity, c.target]
             up.add_metric(lv, 0 if s.status == "down" else 1)
             fails.add_metric(lv, s.consecutive_failures)
             dur.add_metric(lv, s.last_duration or 0)
             last.add_metric(lv, s.last_run)
-        yield from (up, fails, dur, last)
+        yield from (up, fails, dur, last, paused)
 
         seen = GaugeMetricFamily(
             "argus_heartbeat_last_seen_timestamp_seconds",
