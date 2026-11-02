@@ -100,6 +100,7 @@ v1 keeps stack secrets age-encrypted in git and Ansible writes them to each host
 - Stack secrets are entered in the UI, or imported, and kept encrypted in Argus.
 - They are sent only to the host that runs that stack, inside its signed desired state.
 - The companion writes them to a root-only `.env` next to the compose file, as Ansible does today.
+- Argus can decrypt them (the key is in its data volume), so its data volume and admin password guard every stack secret. An external secret store is a later, advanced option (decision 11).
 
 ### Private images
 
@@ -195,6 +196,7 @@ Each milestone ships something usable and goes through PRs with tests, like v1.
 | M5b | **Getting started and patching:** a first-run checklist, check suggestions from a host's containers, adopting running stacks into the deploy repo, coverage per host; OS patching through companions with backup checks, pre-patch snapshots and optional restore tests (see below) | a fresh install gets its first host watched, patched on a schedule and deploying from git by following the checklist alone |
 | M6 | **Launch:** README, install guide, example config, screenshots, license; repo swap; this homelab on v2 | someone else could install it from the README alone |
 | after | **Security review and hardening** (see the roadmap) | findings fixed or documented |
+| after | **External secret stores** (advanced, decision 11): HashiCorp Vault (and OpenBao), CyberArk | a stack secret is fetched from the store on its host, and Argus never holds its value |
 
 M0 and M1 are the plan for Friday.
 
@@ -220,3 +222,7 @@ Devin approved the design with each suggestion as written:
    A backup location is not required. Argus checks backups (Proxmox task history; restic, borg and other tools report in as jobs) and never stores them. No fresh backup that week means no patch, and Argus says why.
 9. **Restore tests are optional and encouraged:** monthly, one guest or a sample of files at a time (Proxmox: restore to a temporary VM with no network, boot, check the guest agent, delete; restic or borg: their check plus a sampled restore compared by checksum). A failure pages. Hosts without one show it as a gap on their card and in the checklist.
 10. **Argus's own data is backed up too:** a one-click encrypted export of settings and secrets, and a home-page warning until there is one.
+
+## Decisions (approved 2026-11-02)
+
+11. **Secrets: built in by default, an external store as an advanced option** (Devin). Stack secrets stay encrypted in Argus's database: nothing else to run, which suits most homelabs. After launch, for people who already run one, Argus integrates with HashiCorp Vault (and OpenBao, its open-source fork) and CyberArk. A secret is then a reference (`vault:kv/couchdb#password`) that the companion resolves on its host with its own credentials, so Argus never holds the value. Password rotation can build on that. Not chosen: GitHub Actions secrets (write-only; only a workflow can read them, which would mean deploying from Actions, against Argus's pull model), and password managers such as KeePass or LastPass (made for people, not servers).
