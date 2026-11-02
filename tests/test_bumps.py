@@ -104,7 +104,8 @@ def test_track_from_companions():
     assert steps["bumped"]["status"] == "not_wired" and "write token" in steps["bumped"]["detail"]
     new = [{**old[0], "shas": ["bbbbbbb"], "status": {"nas": "pending"}}]
     steps = {s["key"]: s for s in track(state, None, {}, NOW, "ann/stacks", "", new)}
-    assert steps["bumped"]["status"] == "done" and steps["deployed"]["detail"] == "Deploying on nas"
+    assert steps["bumped"]["status"] == "done"
+    assert steps["deployed"]["detail"] == "Deploying sha-bbbbbbb on nas"
     new[0]["status"] = {"nas": "rolled_back"}
     steps = {s["key"]: s for s in track(state, None, {}, NOW, "ann/stacks", "", new)}
     assert steps["deployed"]["status"] == "failed"

@@ -167,6 +167,28 @@ async def test_failed_build_names_the_step():
     assert main["failed_step"].startswith("ci / build: Trivy")
 
 
+async def test_main_follows_a_newer_build_by_another_workflow():
+    # A merge gate that dispatches the release, not CI: that commit is main's
+    # newest build, so the track does not sit on CI's older one.
+    release = {"id": 120, "event": "workflow_dispatch", "status": "completed",
+               "conclusion": "success", "head_sha": "a520005ffff", "html_url": "run120",
+               "created_at": "2027-01-15T08:00:00Z", "updated_at": "2027-01-15T08:04:00Z",
+               "head_commit": {"message": "Merge pull request #11 from dependabot/npm/vite"}}
+    p = await polled({
+        "/repos/Owner/shop/actions/runs": {"workflow_runs": [
+            {"event": "dynamic", "status": "completed", "conclusion": "success",
+             "head_sha": "zzz", "created_at": "2027-01-15T08:01:00Z"},
+            release]},
+        "/repos/Owner/shop/actions/runs/120/jobs": {"jobs": []},
+    })
+    main = p.repos["shop"]["main"]
+    assert main["sha"] == "a520005" and main["pr"] == 11 and main["trivy"] is None
+    # An older run by another workflow does not replace CI's newer one.
+    old = {**release, "created_at": "2027-01-15T07:00:00Z"}
+    p = await polled({"/repos/Owner/shop/actions/runs": {"workflow_runs": [old]}})
+    assert p.repos["shop"]["main"]["sha"] == "abc1234"
+
+
 # ---- tracks ----
 
 def state(**over) -> dict:
@@ -227,6 +249,23 @@ def test_track_deploy_waits_for_stack_sync():
     late = {"stack-sync-box": {"status": "late", "last_seen": NOW - 9000}}
     assert statuses(track(state(), UP, late, NOW))["deployed"] == "failed"
     assert statuses(track(state(), UP, {}, NOW))["deployed"] == "not_wired"
+
+
+def test_a_waiting_step_says_what_it_waits_for_and_since_when():
+    # Built 10 minutes ago (main's updated_at is NOW - 600), not bumped yet.
+    st = state(stack={**state()["stack"], "shas": ["0ld0000"]})
+    bumped = {s["key"]: s for s in track(st, UP, FRESH, NOW)}["bumped"]
+    assert bumped["detail"] == ("Built 10m ago; waiting for stack-bump to put sha-abc1234 in "
+                                "homelab-stacks (it runs every 5 minutes)")
+    # Past 15 minutes it says so, well before the 30-minute failure.
+    slow = {s["key"]: s for s in track(st, UP, FRESH, NOW + 600)}["bumped"]
+    assert slow["status"] == "running"
+    assert slow["detail"].startswith("Taking longer than usual: Built 20m ago;")
+    # Bumped 500 s ago, stack-sync not run since.
+    stale = {"stack-sync-box": {"status": "ok", "last_seen": NOW - 900}}
+    deployed = {s["key"]: s for s in track(state(), UP, stale, NOW)}["deployed"]
+    assert deployed["detail"].startswith("sha-abc1234 went into homelab-stacks 8m ago; "
+                                         "waiting for stack-sync on box")
 
 
 def test_track_build_running_and_failed():

@@ -41,6 +41,8 @@ DEFAULT_POLL = 60
 VERSIONS = re.compile(r"\bfrom v?(\d+)(?:\.(\d+))?\S* to v?(\d+)(?:\.(\d+))?")
 MERGED_WINDOW = 14 * 86400
 BUMP_GRACE = 1800  # seconds after a green build before a missing bump is a failure
+SLOW = 900  # seconds a step may wait before the track says it is taking long
+BUILD_EVENTS = ("push", "workflow_dispatch")
 PR_REF = re.compile(r"\(#(\d+)\)|Merge pull request #(\d+)")
 BAD = {"failure", "timed_out", "cancelled", "startup_failure", "action_required"}
 
@@ -223,10 +225,20 @@ class Poller:
         # newest push build on the default branch, whatever its workflow.
         runs = await self._get(f"{base}/actions/workflows/ci.yml/runs", branch=t.branch,
                                per_page=10)
-        if runs is None:
+        has_ci = runs is not None
+        if not has_ci:
             runs = await self._get(f"{base}/actions/runs", branch=t.branch, per_page=20)
         run = next((x for x in (runs or {}).get("workflow_runs", [])
-                    if x["event"] in ("push", "workflow_dispatch")), None)
+                    if x["event"] in BUILD_EVENTS), None)
+        if has_ci:
+            # A newer commit built only by another workflow (a merge gate that
+            # dispatches a release rather than CI) is still main's newest build.
+            every = await self._get(f"{base}/actions/runs", branch=t.branch, per_page=20)
+            newest = next((x for x in (every or {}).get("workflow_runs", [])
+                           if x.get("event") in BUILD_EVENTS), None)
+            if newest and (run is None or (newest["head_sha"] != run["head_sha"]
+                                           and ts(newest["created_at"]) > ts(run["created_at"]))):
+                run = newest
         # Dependabot's version updates run as "dynamic" workflow runs.
         dyn = await self._get(f"{base}/actions/runs", event="dynamic", per_page=30)
         # 403 too: Dependabot alerts off, or not readable with this token.
@@ -359,6 +371,19 @@ async def run_forever(poller: Poller, config: Callable[[], Any],
         await asyncio.sleep(wait)
 
 
+def _for(seconds: float) -> str:
+    """How long ago, in the words a track uses: "under a minute", "6m", "2h 5m"."""
+    m = int(seconds // 60)
+    if m < 1:
+        return "under a minute"
+    return f"{m}m" if m < 60 else f"{m // 60}h {m % 60}m" if m % 60 else f"{m // 60}h"
+
+
+def _waiting(seconds: float, what: str) -> str:
+    """A waiting step's detail, flagged once it has waited longer than usual."""
+    return f"Taking longer than usual: {what}" if seconds > SLOW else what
+
+
 def _placed(add, placed: list[dict], main: dict | None, built: str, now: float,
             repo_name: str, can_bump: bool) -> bool:
     """Bumped and deployed steps from the deploy repo and companions' reports."""
@@ -374,7 +399,9 @@ def _placed(add, placed: list[dict], main: dict | None, built: str, now: float,
         add("bumped", "not_wired", "No write token for the deploy repo, so Argus does not bump "
             "tags; add one on the GitHub page")
     elif now - main["updated_at"] < BUMP_GRACE:
-        add("bumped", "running", "Argus bumps the tag within a minute")
+        age = now - main["updated_at"]
+        add("bumped", "running", _waiting(age, f"Built {_for(age)} ago; Argus puts sha-{sha} "
+                                          f"in {repo_name} within a minute"))
     else:
         add("bumped", "failed", f"{', '.join(behind)} still on an older sha 30 minutes after "
             "the build; the GitHub page says why")
@@ -391,7 +418,7 @@ def _placed(add, placed: list[dict], main: dict | None, built: str, now: float,
         add("deployed", "failed", f"Deploy failed on {', '.join(bad)}; see Hosts")
         return False
     if waiting:
-        add("deployed", "running", f"Deploying on {', '.join(waiting)}")
+        add("deployed", "running", f"Deploying sha-{sha} on {', '.join(waiting)}")
         return False
     add("deployed", "done", f"On {', '.join(h for h, _ in hosts)} by its companion")
     return True
@@ -482,8 +509,11 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
         elif hb["status"] == "late":
             add("deployed", "failed", f"{deploy} is late; see journalctl -u {deploy}")
         elif running:
-            add("deployed", "running", f"{deploy} still runs sha-{running[:7]}; "
-                f"journalctl -u {deploy} says when sha-{main['sha']} goes out")
+            age = now - main["updated_at"]
+            # Not flagged as slow: a deploy timer keeps its own schedule.
+            add("deployed", "running", f"Built {_for(age)} ago; waiting for {deploy} to deploy "
+                f"sha-{main['sha']} (it still runs sha-{running[:7]}; journalctl -u {deploy} "
+                "says when)")
         else:
             add("deployed", "not_wired", f"{deploy} does not report which version it runs")
     elif stack is None and placed:
@@ -498,7 +528,10 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
             # No time: the stack's last commit may be another image's bump.
             add("bumped", "done", f"sha-{main['sha']} in {stacks_repo}", stack["url"])
         elif now - main["updated_at"] < BUMP_GRACE:
-            add("bumped", "running", "stack-bump runs every 5 minutes", stack["url"])
+            age = now - main["updated_at"]
+            add("bumped", "running", _waiting(age, (
+                f"Built {_for(age)} ago; waiting for stack-bump to put sha-{main['sha']} "
+                f"in {stacks_repo} (it runs every 5 minutes)")), stack["url"])
         else:
             tags = ", ".join("sha-" + s for s in stack["shas"]) or "no tag"
             add("bumped", "failed", f"Still {tags} 30 minutes after the build; "
@@ -520,7 +553,10 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
         elif hb["status"] == "late":
             add("deployed", "failed", f"stack-sync-{host} is late; see journalctl -u stack-sync")
         else:
-            add("deployed", "running", f"stack-sync on {host} runs every 5 minutes")
+            age = now - (stack["changed_at"] or now)
+            add("deployed", "running", _waiting(age, (
+                f"sha-{main['sha']} went into {stacks_repo} {_for(age)} ago; waiting for "
+                f"stack-sync on {host} to deploy it (it runs every 5 minutes)")))
 
     if check is None and stack is None and not deploy and not placed:
         pass
