@@ -2,7 +2,7 @@ import { agoText, safeHref } from "../lib.js";
 
 const WORD = {
   done: "done", running: "running", waiting: "waits for you", failed: "failed",
-  pending: "pending", not_wired: "not wired",
+  pending: "pending", not_wired: "not wired", paused: "paused",
 };
 
 // One change's path from update PR to healthy (argus github.track), each step

@@ -114,6 +114,13 @@ class Setup(Password):
     code: str = Field(max_length=32)
 
 
+class Pause(BaseModel):
+    """Pause a check: it keeps running but shows grey and never pages."""
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field("", max_length=200)
+    until: Literal["up", "resumed"] = "up"
+
+
 class NewPassword(BaseModel):
     model_config = ConfigDict(extra="forbid")
     current: str = Field(max_length=1024)
@@ -1073,7 +1080,15 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
 
     def check_view(r: Runtime, c) -> dict:
         s = r.store.get(c.name)
-        return {**c.model_dump(), **{k: v for k, v in vars(s).items() if k != "name"}}
+        view = {**c.model_dump(), **{k: v for k, v in vars(s).items() if k != "name"}}
+        pause = r.store.pause_of(c.name)
+        # A paused check shows as paused everywhere; what its probe says stays
+        # in probe_status.
+        view["probe_status"], view["paused"] = s.status, pause and {
+            k: pause[k] for k in ("reason", "since", "until")}
+        if pause:
+            view["status"] = "paused"
+        return view
 
     @app.get("/api/checks")
     async def checks(request: Request) -> list[dict]:
@@ -1118,6 +1133,24 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                 return {**check_view(r, c), "transitions": r.store.transitions(name),
                         "repo": repo and repo["name"], "track": repo and repo["track"]}
         raise HTTPException(404, "no such check")
+
+    @app.put("/api/checks/{name}/pause")
+    async def pause_check(name: str, body: Pause, request: Request, _: Admin) -> dict:
+        r = rt(request)
+        if name not in {c.name for c in r.config.checks}:
+            raise HTTPException(404, "no such check")
+        r.store.pause(name, body.reason.strip(), body.until, r.clock())
+        await request.app.state.alerter.evaluate()
+        return await check(name, request)
+
+    @app.delete("/api/checks/{name}/pause")
+    async def resume_check(name: str, request: Request, _: Admin) -> dict:
+        r = rt(request)
+        if name not in {c.name for c in r.config.checks}:
+            raise HTTPException(404, "no such check")
+        r.store.resume(name, r.clock())
+        await request.app.state.alerter.evaluate()
+        return await check(name, request)
 
     @app.get("/api/heartbeats")
     async def heartbeats(request: Request) -> list[dict]:

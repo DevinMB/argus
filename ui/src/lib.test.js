@@ -8,7 +8,7 @@ const c = (name, status, extra = {}) => ({
 describe("summarize", () => {
   it("counts each status and treats anything else as unknown", () => {
     expect(summarize([c("a", "up"), c("b", "down"), c("c", "weird")])).toEqual({
-      total: 3, up: 1, failing: 0, down: 1, unknown: 1,
+      total: 3, up: 1, failing: 0, down: 1, unknown: 1, paused: 0,
     });
   });
 });
@@ -95,6 +95,10 @@ describe("headline and siteNote", () => {
     expect(headline(s({ up: 3 }))).toBe("All quiet.");
     expect(siteNote(s({ up: 3 }))).toBe("all up");
   });
+  it("a paused check is quiet: no problem, but said", () => {
+    expect(headline(s({ up: 2, paused: 1 }))).toBe("All quiet.");
+    expect(siteNote(s({ up: 2, paused: 1 }))).toBe("1 paused");
+  });
 });
 
 describe("siteName", () => {
@@ -119,6 +123,11 @@ describe("life cycle", () => {
     const s = lifecycle(repo());
     expect(s).toMatchObject({ column: "live", tone: "up", label: "Up to date", you: false });
     expect(s.sentence).toBe("Live on box. Last change: Bump httpx.");
+  });
+  it("a paused check is neither down nor needs you", () => {
+    const s = lifecycle(repo({ track: swap("healthy", "paused", "web is paused: off for now") }));
+    expect(s).toMatchObject({ column: "live", tone: "paused", label: "Paused", you: false });
+    expect(s.sentence).toBe("Live on box. web is paused: off for now, so it does not page.");
   });
   it("says so when there is no health check, and when it ships inside another app", () => {
     expect(lifecycle(repo({ track: swap("healthy", "not_wired") })).sentence).toMatch(/no health check/);

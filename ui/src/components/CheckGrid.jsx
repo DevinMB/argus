@@ -1,6 +1,6 @@
-import { ago, groupChecks, isPublic, ms, siteName, summarize } from "../lib.js";
+import { ago, agoText, groupChecks, isPublic, ms, siteName, summarize } from "../lib.js";
 
-const LABEL = { up: "Up", failing: "Failing", down: "Down", unknown: "Waiting" };
+const LABEL = { up: "Up", failing: "Failing", down: "Down", unknown: "Waiting", paused: "Paused" };
 
 // A check with something to say gets the full tile: target, error, tags, timing.
 function Cell({ c, now, sites, onPick }) {
@@ -12,7 +12,9 @@ function Cell({ c, now, sites, onPick }) {
         <span className={`cell-status st-${c.status}`}>{LABEL[c.status] ?? c.status}</span>
       </div>
       <div className="cell-target" title={c.target}>{c.target}</div>
-      {c.last_error && <div className="cell-error">{c.last_error}</div>}
+      {c.paused
+        ? <div className="cell-paused-why">{c.paused.reason || "Paused"}{c.paused.until === "up" ? "; resumes when it is back up" : ""}</div>
+        : c.last_error && <div className="cell-error">{c.last_error}</div>}
       <div className="chips">
         <span className="chip">{c.kind}</span>
         {c.severity === "critical" && <span className="chip chip-critical">pages</span>}
@@ -20,9 +22,11 @@ function Cell({ c, now, sites, onPick }) {
         {Object.keys(sites ?? {}).length > 1 && <span className="chip">{siteName(sites, c.site)}</span>}
       </div>
       <div className="cell-foot">
-        <span>{c.last_change ? `since ${ago(now - c.last_change)}` : "no result yet"}</span>
-        <span>{ms(c.last_duration)}</span>
-        {c.consecutive_failures > 0 && <span className="warn">{c.consecutive_failures} failed</span>}
+        {c.paused ? <span>paused {agoText(now - c.paused.since)} · now {c.probe_status}</span> : <>
+          <span>{c.last_change ? `since ${ago(now - c.last_change)}` : "no result yet"}</span>
+          <span>{ms(c.last_duration)}</span>
+          {c.consecutive_failures > 0 && <span className="warn">{c.consecutive_failures} failed</span>}
+        </>}
       </div>
     </button>
   );
@@ -51,7 +55,8 @@ export default function CheckGrid({ checks, now, sites, groups = {}, onPick }) {
         <h2 className="eyebrow">
           {group} <span className="count">{list.length}</span>
           <span className={`group-state st-${s.down ? "down" : s.failing ? "failing" : "up"}`}>
-            {s.up === s.total ? "all up" : `${s.total - s.up} not up`}
+            {s.up + s.paused === s.total ? "all up" : `${s.total - s.up - s.paused} not up`}
+            {s.paused > 0 && <span className="st-paused"> · {s.paused} paused</span>}
           </span>
         </h2>
         {groups[group] && <p className="group-hint">{groups[group][0].toUpperCase() + groups[group].slice(1)}.</p>}

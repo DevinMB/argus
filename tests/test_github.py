@@ -268,6 +268,12 @@ def test_a_waiting_step_says_what_it_waits_for_and_since_when():
                                          "waiting for stack-sync on box")
 
 
+def test_a_paused_check_is_neither_healthy_nor_failed():
+    paused = {**UP, "status": "paused", "paused": {"reason": "off for now", "since": NOW - 60}}
+    healthy = track(state(), paused, FRESH, NOW)[-1]
+    assert (healthy["status"], healthy["detail"]) == ("paused", "web is paused: off for now")
+
+
 def test_track_build_running_and_failed():
     running = state(main={**state()["main"], "status": "running"})
     st = statuses(track(running, UP, FRESH, NOW))

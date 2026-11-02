@@ -6,6 +6,15 @@ What each part of Argus does, and how it keeps you safe while it does it. Instal
 
 A new install shows a short checklist on its home page: make sure alerts reach you, add a host, watch what matters, connect GitHub, deploy from git. One step is open at a time, with a line on why it matters and one button. Once a host reports, Argus suggests a check for each port its containers publish ("jellyfin :8096 on nas"); **Watch** fills in the form. Afterwards a coverage line ("12 of 15 published services watched · 4 of 4 hosts reporting") and each host's "not watched yet" list show what to do next. The checklist can be hidden.
 
+## Pausing a check
+
+When you already know why something is down (a server switched off until another project is done), open the check and press **Pause…**. Add a reason if you like, and choose when the pause ends:
+
+- **Until it is back up** (the default): it resumes by itself once it has been down and answers again.
+- **Until I resume it**: it stays paused even when it answers.
+
+A paused check keeps running, so its history stays true, but it shows as a grey "Paused" with your reason, never pages, and is left out of every count of problems. Pausing a check that already paged sends no "resolved". Resuming one that is still down pages again. Any signed-in user can pause, whatever the config's source, and the pause is in the history and in Argus's export. If Prometheus pages for you, `argus_check_paused` is 1 while a check is paused, and the rules on the Alerts page skip paused checks.
+
 ## Patching
 
 Each host's card has **Choose a window**: a weekday and time on the host's own clock. In the window, the host's companion asks Argus, and Argus decides. It never patches on a Sunday (backups run then, unless you allow it for a host), patches one host at a time, and never patches a monitoring-only host. Updates run in a transient systemd unit, outside the companion's sandbox. Afterwards every container that ran before must run again (and be healthy, if it has a health check), then the host reboots if an update needs it and its safety net allows it. A failed run, a run with no result for two hours, or a window skipped for a stale backup pages you. **Patch now** runs once, outside the window, by the same rules.

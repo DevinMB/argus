@@ -1,6 +1,7 @@
 // Pure helpers for the Argus UI. No DOM, so they are unit-tested (lib.test.js).
 
-export const STATUSES = ["down", "failing", "unknown", "up"];
+// Paused: its owner knows it is down; grey, never counted as a problem.
+export const STATUSES = ["down", "failing", "unknown", "paused", "up"];
 const RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
 
 // Site display names come from argus.yml (via /api/info), never from the code.
@@ -14,7 +15,7 @@ export function acrossSites(n) {
 }
 
 export function summarize(checks) {
-  const out = { total: checks.length, up: 0, failing: 0, down: 0, unknown: 0 };
+  const out = { total: checks.length, up: 0, failing: 0, down: 0, unknown: 0, paused: 0 };
   for (const c of checks) out[c.status in out ? c.status : "unknown"] += 1;
   return out;
 }
@@ -130,6 +131,7 @@ export function siteNote(s) {
   if (s.down) return `${s.down} down`;
   if (s.failing) return `${s.failing} failing`;
   if (s.unknown) return `${s.unknown} waiting`;
+  if (s.paused) return `${s.paused} paused`;
   return "all up";
 }
 
@@ -250,6 +252,9 @@ export function lifecycle(repo) {
     return out("live", "unknown", "Built, not deployed", `${change} is built; ${deployed.detail.toLowerCase()}.`);
   }
   const where = repo.stack?.host ? ` on ${repo.stack.host}` : "";
+  if (healthy?.status === "paused") {
+    return out("live", "paused", "Paused", `Live${where}. ${healthy.detail}, so it does not page.`);
+  }
   const check = healthy?.status === "not_wired" ? " (no health check)" : "";
   return out("live", "up", "Up to date", `Live${where}${check}. Last change: ${change}.`);
 }

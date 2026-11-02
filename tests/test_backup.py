@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from test_auth import PASSWORD, sign_up
 
+from argus import configsrc
 from argus.alerts import TOKEN
 from argus.app import create_app
 from argus.runtime import Runtime
@@ -34,6 +35,10 @@ def test_an_export_carries_secrets_hosts_and_the_signing_key_to_a_new_install(pa
                     json={"url": "https://argus.lan", "name": "nas"}).json()["code"]
     me = old.post("/companion/enroll", json={"code": code, "hostname": "nas"}).json()
     (tmp_path / "old" / "tls.key").write_text("KEY")
+    # A paused check goes along; the restored config still has the check.
+    config = "checks:\n  - {name: ollama, kind: ping, target: h}\n"
+    old.app.state.settings.set(configsrc.TEXT, config)
+    old.app.state.rt.store.pause("ollama", "off for now", "resumed", 100.0)
 
     # Needs the password again, and a real passphrase.
     assert old.post("/api/export", headers=csrf, json={
@@ -57,6 +62,7 @@ def test_an_export_carries_secrets_hosts_and_the_signing_key_to_a_new_install(pa
         assert out == {"hosts": 1, "secrets": 2, "restart": True, "signed_out": True}
         assert new.app.state.settings.secret(TOKEN) == BOT
         assert (tmp_path / "new" / "tls.key").read_text() == "KEY"
+        assert new.app.state.rt.store.pause_of("ollama")["reason"] == "off for now"
         # The host carries on: same token, replies signed with the same key.
         rep = new.post("/companion/report", headers={"Authorization": f"Bearer {me['token']}"},
                        json={"nonce": secrets.token_urlsafe(16)})

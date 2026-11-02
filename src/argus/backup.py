@@ -3,9 +3,9 @@ carry on as this one (design decision 10).
 
 The data key in the volume is what unlocks every secret; lose the volume and
 the secrets are gone. The export holds the settings, the secrets (opened,
-then sealed again under the export's passphrase), the enrolled hosts, and
-Argus's TLS certificate and key, so companions that pinned it keep talking to
-the restored install. Check history and sessions are left out.
+then sealed again under the export's passphrase), the enrolled hosts, the
+paused checks, and Argus's TLS certificate and key, so companions that pinned
+it keep talking to the restored install. Check history and sessions are left out.
 
 Taking one needs the admin password again and a passphrase of 12 characters
 or more; the file is AES-256-GCM under a scrypt key from that passphrase.
@@ -49,6 +49,7 @@ def export(settings: Settings, data_dir: Path, passphrase: str) -> bytes:
         "secrets": {k: settings.secret(k) for (k,) in db.execute("SELECT key FROM secrets")},
         "companions": [dict(zip(COMPANION_COLS, row, strict=True)) for row in db.execute(
             f"SELECT {', '.join(COMPANION_COLS)} FROM companions")],
+        "pauses": [dict(r) for r in db.execute("SELECT * FROM pauses")],
         "tls": {name: (data_dir / name).read_text() for name in ("tls.crt", "tls.key")
                 if (data_dir / name).is_file()},
     }
@@ -88,6 +89,12 @@ def restore(settings: Settings, data_dir: Path, blob: bytes, passphrase: str) ->
             db.execute(f"INSERT INTO companions ({', '.join(COMPANION_COLS)}) VALUES "
                        f"({', '.join('?' * len(COMPANION_COLS))})",
                        tuple(c[k] for k in COMPANION_COLS))
+        # Older exports have none.
+        if "pauses" in plain:
+            db.execute("DELETE FROM pauses")
+        for p in plain.get("pauses", []):
+            db.execute("INSERT INTO pauses VALUES (?, ?, ?, ?, ?)",
+                       (p["name"], p["reason"], p["since"], p["until"], p["seen_down"]))
     restart = False
     for name, text in plain["tls"].items():
         path = data_dir / name

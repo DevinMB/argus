@@ -1,11 +1,48 @@
 import { useEffect, useRef, useState } from "react";
-import { getCheck } from "../api.js";
+import { getCheck, send } from "../api.js";
 import Track from "./Track.jsx";
 import { ago, agoText, ms, siteName, stamp } from "../lib.js";
 
+// Pausing: "I know it is down". The check keeps running so Argus sees it come
+// back, but it shows grey and never pages.
+function PauseForm({ check, csrf, onDone, onCancel }) {
+  const [reason, setReason] = useState("");
+  const [until, setUntil] = useState("up");
+  const [error, setError] = useState(null);
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      onDone(await send("PUT", `/api/checks/${encodeURIComponent(check.name)}/pause`,
+        { reason, until }, csrf));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  return (
+    <form className="pause-form" onSubmit={save}>
+      <label className="field"><span>Why (optional)</span>
+        <input value={reason} maxLength={200} autoFocus onChange={(e) => setReason(e.target.value)}
+               placeholder="Switched off until the GPU project is done" /></label>
+      <label className="toggle"><input type="radio" checked={until === "up"} onChange={() => setUntil("up")} />
+        <span><strong>Until it is back up</strong>
+          <small>It resumes by itself once it has been down and answers again.</small></span></label>
+      <label className="toggle"><input type="radio" checked={until === "resumed"} onChange={() => setUntil("resumed")} />
+        <span><strong>Until I resume it</strong>
+          <small>Stays paused even when it answers; press Resume when you are done.</small></span></label>
+      {error && <p className="form-error">{error}</p>}
+      <div className="actions">
+        <button className="btn" type="submit">Pause</button>
+        <button className="link-button" type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
 // Detail for one check: its settings, last result, and a timeline of every
 // change of state Argus recorded, newest first.
-export default function CheckDrawer({ name, now, sites, onClose, onEdit, onRemove }) {
+// Pausing needs only a session (csrf); changing or removing also needs an editable config (onEdit).
+export default function CheckDrawer({ name, now, sites, csrf, onClose, onEdit, onRemove, onChanged }) {
+  const [pausing, setPausing] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [check, setCheck] = useState(null);
   const [error, setError] = useState(null);
@@ -46,14 +83,37 @@ export default function CheckDrawer({ name, now, sites, onClose, onEdit, onRemov
             <div className={`drawer-status st-${check.status}`}>
               <span className={`dot dot-${check.status}`} />
               <span className="status-word">{check.status}</span>
-              <span className="muted">for {ago(now - check.last_change)}</span>
+              <span className="muted">for {ago(now - (check.paused ? check.paused.since : check.last_change))}</span>
             </div>
+            {check.paused && (
+              <p className="paused-note">
+                {check.paused.reason ? <>“{check.paused.reason}”. </> : null}
+                Argus still checks it (now {check.probe_status}) but it never pages
+                {check.paused.until === "up" ? ", and it resumes by itself once it is back up." : " until you resume it."}
+              </p>
+            )}
             {check.last_error && <pre className="err">{check.last_error}</pre>}
-            {onEdit && (
+            {csrf && check.paused && (
               <div className="actions">
-                <button className="btn" onClick={() => onEdit(check)}>Change</button>
-                {!confirm && <button className="btn" onClick={() => setConfirm(true)}>Remove…</button>}
-                {confirm && (
+                <button className="btn" onClick={async () => {
+                  try {
+                    setCheck(await send("DELETE", `/api/checks/${encodeURIComponent(name)}/pause`, undefined, csrf));
+                    onChanged?.();
+                  } catch (e) { setError(e.message); }
+                }}>Resume</button>
+                {check.probe_status === "down" && check.severity === "critical" && <span className="small">It is down now, so resuming pages you.</span>}
+              </div>
+            )}
+            {csrf && !check.paused && pausing && (
+              <PauseForm check={check} csrf={csrf} onCancel={() => setPausing(false)}
+                         onDone={(c) => { setPausing(false); setCheck(c); onChanged?.(); }} />
+            )}
+            {(onEdit || (csrf && !check.paused && !pausing)) && (
+              <div className="actions">
+                {csrf && !check.paused && !pausing && <button className="btn" onClick={() => setPausing(true)}>Pause…</button>}
+                {onEdit && <button className="btn" onClick={() => onEdit(check)}>Change</button>}
+                {onEdit && !confirm && <button className="btn" onClick={() => setConfirm(true)}>Remove…</button>}
+                {onEdit && confirm && (
                   <>
                     <span className="small">Stop checking {name}? Its history goes too.</span>
                     <button className="btn" onClick={() => onRemove(check)}>Remove</button>

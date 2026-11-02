@@ -15,6 +15,7 @@
   --failing: #f2b84b;
   --down: #ff6b5e;
   --unknown: #5a5a5a;
+  --paused: #8a96a8;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
@@ -47,10 +48,13 @@ button { font: inherit; color: inherit; }
 .st-failing { color: var(--failing); }
 .st-down { color: var(--down); }
 .st-unknown { color: var(--muted); }
+.st-paused { color: var(--paused); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--unknown); }
 .dot-up { background: var(--up); }
 .dot-failing { background: var(--failing); }
 .dot-down { background: var(--down); box-shadow: 0 0 0 4px rgb(255 107 94 / 0.18); }
+/* Paused: a hollow ring, so it never reads as a status colour. */
+.dot-paused { background: none; box-shadow: inset 0 0 0 2px var(--paused); }
 
 /* top bar */
 .top {
@@ -91,6 +95,7 @@ button { font: inherit; color: inherit; }
 .tick-failing { stroke: var(--failing); }
 .tick-down { stroke: var(--down); animation: pulse 1.6s ease-in-out infinite; }
 .tick-unknown { stroke: var(--unknown); }
+.tick-paused { stroke: var(--paused); opacity: 0.6; }
 .eye-center {
   position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
   pointer-events: none;
@@ -200,6 +205,8 @@ button { font: inherit; color: inherit; }
 .cell:hover { background: var(--panel); }
 .cell-down { background: rgb(255 107 94 / 0.06); }
 .cell-failing { background: rgb(242 184 75 / 0.05); }
+.cell-paused { opacity: 0.8; }
+.cell-paused-why { font-size: 12.5px; color: var(--paused); overflow-wrap: anywhere; }
 .cell-top { display: flex; align-items: center; gap: 10px; }
 .cell-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell-status { font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
@@ -291,6 +298,8 @@ button { font: inherit; color: inherit; }
 .step-failed .step-node { border-color: var(--down); background: var(--down); }
 .step-pending .step-node { border-color: var(--line-strong); }
 .step-not_wired .step-node { border-style: dashed; border-color: var(--line-strong); }
+.step-paused .step-node { border-color: var(--paused); }
+.step-paused .step-status { color: var(--paused); }
 .step-head { display: flex; gap: 10px; align-items: baseline; }
 .step-title { font-weight: 600; }
 .step-status { font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
@@ -484,6 +493,10 @@ button.crow:hover { background: var(--panel); }
 .jcard-items { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 5px; }
 .jitem { font: 11.5px/1 var(--mono); padding: 4px 7px; border-radius: 4px; border: 1px solid var(--line-strong); background: var(--raise); cursor: default; }
 .tone-bg-unknown { color: var(--muted); }
+.tone-bg-paused { color: var(--paused); }
+.tone-paused { stroke: var(--paused); }
+.paused-note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.pause-form { display: grid; gap: 10px; margin: 12px 0; }
 .jcard-foot { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: auto; padding-top: 8px;
   border-top: 1px solid var(--line); font: 11.5px var(--mono); color: var(--muted); }
 .mono-name { color: var(--line-strong); }
