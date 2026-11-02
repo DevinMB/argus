@@ -120,9 +120,12 @@ class Companions:
         return self.db.execute("SELECT * FROM companions WHERE token_hash = ?",
                                (_hash(token),)).fetchone()
 
-    def remove(self, cid: str) -> bool:
+    def remove(self, cid: str) -> str | None:
+        """Remove a host; returns its name, or None when there was no such host."""
         with self.db:
-            return self.db.execute("DELETE FROM companions WHERE id = ?", (cid,)).rowcount > 0
+            row = self.db.execute("SELECT name FROM companions WHERE id = ?", (cid,)).fetchone()
+            self.db.execute("DELETE FROM companions WHERE id = ?", (cid,))
+        return row and row["name"]
 
     # --- reports ---
 

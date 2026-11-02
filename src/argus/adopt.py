@@ -91,6 +91,12 @@ class Adoption:
         pending = set(self.settings.get(REQUEST + host) or [])
         self.settings.set(REQUEST + host, sorted(pending | {project}))
 
+    def forget(self, host: str) -> None:
+        """A removed host's pending reads and the files it sent go with it."""
+        self.settings.set(REQUEST + host, None)
+        for k in [k for k in self.collected if k[0] == host]:
+            del self.collected[k]
+
     def to_collect(self, host: str) -> list[str]:
         return self.settings.get(REQUEST + host) or []
 

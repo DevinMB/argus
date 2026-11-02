@@ -68,6 +68,16 @@ class Patching:
     def set_plan(self, host: str, plan: dict) -> None:
         self.settings.set(SETTINGS + host, {k: plan[k] for k in DEFAULTS if k in plan})
 
+    def forget(self, host: str) -> None:
+        """A removed host leaves nothing behind: a new machine enrolled later under
+        the same name must not inherit its schedule, its backup or its runs (as a
+        reused Proxmox VMID once inherited a removed guest's backup, 2026-11-02)."""
+        self.settings.set(SETTINGS + host, None)
+        self.settings.set(REQUEST + host, None)
+        self.skipped.pop(host, None)
+        with self.db:
+            self.db.execute("DELETE FROM patch_runs WHERE host = ?", (host,))
+
     # --- the safety net ---
 
     def _age(self, ref: str) -> float | None:

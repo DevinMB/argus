@@ -151,3 +151,38 @@ def test_a_host_patched_by_something_else(env):
     # And the checklist counts it as patched.
     steps = {s["key"]: s for s in c.get("/api/start").json()["steps"]}
     assert steps["patching"]["done"]
+
+
+def test_a_host_left_without_a_backup_on_purpose_is_never_paged_about_one(env):
+    # v2's side of the 2026-11-02 false page: Argus only watches a backup the
+    # owner names for a host, so a host left out on purpose has nothing to go stale.
+    c, csrf, rt, clock = env
+    lab = enroll(c, csrf, "rover-lab")
+    c.put("/api/patching/rover-lab", headers=csrf, json=PLAN)
+    job_ok(c, rt, clock, "nas-backup")  # someone else's backup, weeks ago
+    clock.now += 30 * 86400
+    run = report(c, lab, local=TUE_0305)["patch"]
+    assert run["level"] == "security"  # no safety net: careful, but patched
+    report(c, lab, local=TUE_0305, patch={"run": run["run"], "state": "ok"})
+    assert c.app.state.alerter.problems() == {}
+
+
+def test_a_removed_hosts_plan_is_not_inherited_by_a_new_host_with_its_name(env):
+    # The VMID-reuse shape: a new machine under an old name must start clean.
+    c, csrf, rt, clock = env
+    old = enroll(c, csrf, "lab")
+    c.put("/api/patching/lab", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
+    job_ok(c, rt, clock, "nas-backup")
+    run = report(c, old, local=TUE_0305)["patch"]
+    report(c, old, local=TUE_0305, patch={"run": run["run"], "state": "failed",
+                                          "summary": "dpkg broke"})
+    c.post("/api/patching/lab/now", headers=csrf)
+    cid = c.get("/api/companions").json()["companions"][0]["id"]
+    assert c.delete(f"/api/companions/{cid}", headers=csrf).status_code == 200
+    enroll(c, csrf, "lab")
+    host = c.get("/api/companions").json()["companions"][0]
+    assert host["name"] == "lab"
+    assert host["patching"]["plan"]["enabled"] is False
+    assert host["patching"]["plan"]["backup"] == ""
+    assert host["patching"]["runs"] == []
+    assert c.app.state.alerter.problems() == {}  # the old host's failed run went with it

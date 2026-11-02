@@ -968,8 +968,12 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
 
     @app.delete("/api/companions/{cid}")
     async def remove_host(cid: str, request: Request, _: Admin) -> dict:
-        if not rt(request).companions.remove(cid):
+        name = rt(request).companions.remove(cid)
+        if name is None:
             raise HTTPException(404, "no such host")
+        # Nothing of it stays to be inherited by a later host with the same name.
+        request.app.state.patching.forget(name)
+        request.app.state.adoption.forget(name)
         return {"ok": True}
 
     # --- companions: the hosts' side ---
