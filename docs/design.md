@@ -220,6 +220,10 @@ Devin approved the design with each suggestion as written:
    - a snapshot before patching (Proxmox guests, ZFS or btrfs roots) or a restore-tested backup: full upgrades, reboots, rollback.
 
    A backup location is not required. Argus checks backups (Proxmox task history; restic, borg and other tools report in as jobs) and never stores them. No fresh backup that week means no patch, and Argus says why.
+
+   Two rules from a false page in this homelab (2026-11-02: a reused Proxmox VMID matched the removed guest's last archive, and a guest tagged `nobackup` paged every week):
+   - Argus watches only the backups the owner links to a host. A host left out on purpose has nothing to go stale, so it never pages about backups.
+   - Nothing about a removed host is inherited by a later one: removing a host forgets its plan, backup link, runs and requests, even if a new machine takes its name. When Argus reads Proxmox's backup list itself, it will match archives to a guest by more than its VMID (the guest's UUID, or archives newer than the guest), and honour the `nobackup` tag.
 9. **Restore tests are optional and encouraged:** monthly, one guest or a sample of files at a time (Proxmox: restore to a temporary VM with no network, boot, check the guest agent, delete; restic or borg: their check plus a sampled restore compared by checksum). A failure pages. Hosts without one show it as a gap on their card and in the checklist.
 10. **Argus's own data is backed up too:** a one-click encrypted export of settings and secrets, and a home-page warning until there is one.
 
