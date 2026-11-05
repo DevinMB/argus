@@ -619,7 +619,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             "from_config": bool(rt(request).config.github and rt(request).config.repos),
             "repos": [{**x, "hidden": x["full_name"] in hidden} for x in gh.found or []],
             "found_error": gh.found_error,
-            "last_success": gh.last_success, "last_error": gh.last_error,
+            "last_success": gh.last_success, "last_error": gh.shown_error,
             "rate_remaining": gh.rate and gh.rate[0],
         }
 
@@ -1179,7 +1179,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             "enabled": gh.connected,
             "owners": sorted({t.owner for t in gh.targets}),
             "last_success": gh.last_success,
-            "last_error": gh.last_error or gh.found_error,
+            "last_error": gh.shown_error or gh.found_error,
             "now": r.clock(),
             "repos": repo_views(request),
         }

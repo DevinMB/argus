@@ -42,6 +42,8 @@ VERSIONS = re.compile(r"\bfrom v?(\d+)(?:\.(\d+))?\S* to v?(\d+)(?:\.(\d+))?")
 MERGED_WINDOW = 14 * 86400
 BUMP_GRACE = 1800  # seconds after a green build before a missing bump is a failure
 SLOW = 900  # seconds a step may wait before the track says it is taking long
+STUCK = 3600  # seconds a green patch or minor PR may stay open before it needs a look
+FAILS_SHOWN = 3  # failed polls in a row before the UI says so (one is a GitHub blip)
 BUILD_EVENTS = ("push", "workflow_dispatch")
 PR_REF = re.compile(r"\(#(\d+)\)|Merge pull request #(\d+)")
 BAD = {"failure", "timed_out", "cancelled", "startup_failure", "action_required"}
@@ -121,6 +123,7 @@ class Poller:
         self.merged_by: dict[tuple[str, int], str | None] = {}
         self.last_success: float | None = None
         self.last_error = ""
+        self.failures = 0  # failed polls in a row
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -133,6 +136,7 @@ class Poller:
         """A new connection from the GitHub page: forget what the old one saw."""
         self.creds, self.found, self.found_at, self.etags = creds, None, 0.0, {}
         self.repos, self.targets, self.last_success, self.last_error = {}, [], None, ""
+        self.failures = 0
 
     async def _get(self, url: str, missing: tuple[int, ...] = (404,), **params) -> Any:
         """JSON for a GET; None when the status is in `missing`. Unchanged answers
@@ -191,12 +195,18 @@ class Poller:
             hosts = await self._hosts(gh) if gh and any(t.repo.stack for t in targets) else {}
             states = await asyncio.gather(*(self._repo(gh, t, hosts) for t in targets))
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as e:
-            self.last_error = _err(e)
+            self.last_error, self.failures = _err(e), self.failures + 1
             log.warning("github poll failed, keeping the last results: %s", self.last_error)
             return
         self.repos = {s["name"]: s for s in states}
         self.targets = targets
-        self.last_success, self.last_error = self.clock(), ""
+        self.last_success, self.last_error, self.failures = self.clock(), "", 0
+
+    @property
+    def shown_error(self) -> str:
+        """The poll error worth showing: GitHub has a bad minute now and then, so
+        only after FAILS_SHOWN failures in a row, or before any poll worked."""
+        return self.last_error if self.failures >= FAILS_SHOWN or not self.last_success else ""
 
     async def _file(self, gh: GitHub, path: str) -> str | None:
         f = await self._get(f"/repos/{gh.owner}/{gh.stacks_repo}/contents/{path}")
@@ -460,10 +470,19 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
     alerts = f". {n} open security alert{'s' if n > 1 else ''}" if n else ""
     failing = [p for p in ups if p["ci"] == "failure" and not p["waits_for_you"]]
     waiting = [p for p in ups if p["waits_for_you"]]
+    # Green for an hour and not merged: the gate is missing or broken in this
+    # repo (mars and mars-connectors had none, 2026-11-02).
+    stuck = [p for p in ups if p["ci"] == "success" and not p["waits_for_you"]
+             and now - p.get("created_at", now) > STUCK]
     more = lambda n: f" (+{n} more)" if n > 1 else ""  # noqa: E731
     if failing:
         add("updates", "failed", f"{failing[0]['title']}: CI failed{more(len(failing))}",
             failing[0]["url"])
+    elif stuck:
+        add("updates", "waiting",
+            f"{stuck[0]['title']} passed CI {_for(now - stuck[0]['created_at'])} ago and did not "
+            f"merge{more(len(stuck))}. Is the Dependabot merge gate in this repo's CI?",
+            stuck[0]["url"])
     elif waiting:
         add("updates", "waiting", f"{waiting[0]['title']} waits for you{more(len(waiting))}",
             waiting[0]["url"])
