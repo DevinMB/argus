@@ -41,6 +41,7 @@ function useAction(csrf, setView, reload) {
 
 function Telegram({ view, act, busy, say, handBack }) {
   const [token, setToken] = useState("");
+  const [replacing, setReplacing] = useState(false);
   const [chat, setChat] = useState(view.telegram.chat_id);
   const [chats, setChats] = useState(null);
   const t = view.telegram;
@@ -48,13 +49,17 @@ function Telegram({ view, act, busy, say, handBack }) {
     e.preventDefault();
     const body = { chat_id: chat };
     if (token) body.telegram_token = token;
-    if (await act("tg", "PUT", "/api/alerts", body, "Saved. Now send a test.")) setToken("");
+    if (await act("tg", "PUT", "/api/alerts", body, "Saved. Now send a test.")) {
+      setToken("");
+      setReplacing(false);
+    }
   };
   const find = async () => {
     if (token) await act("tg", "PUT", "/api/alerts", { telegram_token: token });
     const r = await act("tg", "POST", "/api/alerts/telegram-chats", {});
     if (r) {
       setToken("");
+      setReplacing(false);
       setChats(r.chats);
       if (r.chats.length === 1) setChat(r.chats[0].id);
     }
@@ -68,12 +73,20 @@ function Telegram({ view, act, busy, say, handBack }) {
         <li>Open your new bot and send it any message, so it may write to you.</li>
         <li>Paste the token here and press <em>Find my chat</em>.</li>
       </ol>
-      <label className="field">
-        <span>Bot token</span>
-        <input type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off"
-               placeholder={t.token_set ? "Saved. Paste a new one to replace it." : "123456789:AAE..."} />
-        <small>Kept encrypted. Argus never shows it again.</small>
-      </label>
+      {t.token_set && !replacing ? (
+        <p className="field saved-secret">
+          <span>Bot token</span>
+          <span><span className="st-up">Saved</span>, kept encrypted.{" "}
+            <button type="button" className="link-button" onClick={() => setReplacing(true)}>Replace it</button></span>
+        </p>
+      ) : (
+        <label className="field">
+          <span>Bot token</span>
+          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off"
+                 placeholder="123456789:AAE..." autoFocus={replacing} />
+          <small>Kept encrypted. Argus never shows it again.</small>
+        </label>
+      )}
       <label className="field">
         <span>Chat ID</span>
         <span className="field-row">

@@ -20,6 +20,8 @@ export default function SignIn({ session, onSession, why }) {
       onSession(setup
         ? await send("POST", "/api/setup", { code, password })
         : await send("POST", "/api/login", { password }));
+      // A new install goes straight to its checklist on the home page.
+      if (setup) window.location.hash = "";
     } catch (err) {
       setError(err.message);
     } finally {
