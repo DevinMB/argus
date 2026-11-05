@@ -67,7 +67,8 @@ button { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 10px; text-decoration: none;
   font: 600 15px/1 var(--sans); letter-spacing: 0.32em;
 }
-.top-meta { display: flex; gap: 18px; align-items: center; font: 12px var(--mono); color: var(--muted); }
+.top-meta { display: flex; gap: 18px; align-items: center; min-width: 0; font: 12px var(--mono); color: var(--muted); }
+.top-meta > * { white-space: nowrap; }
 .live { display: inline-flex; align-items: center; gap: 7px; color: var(--text); text-transform: uppercase; letter-spacing: 0.1em; }
 .live::before {
   content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
@@ -316,6 +317,7 @@ button { font: inherit; color: inherit; }
 .updates-head { padding: 40px 0 24px; }
 .updates-head h1 { font: 400 40px/1.1 var(--sans); letter-spacing: -0.02em; margin: 0 0 12px; }
 .updates-head .lede { margin: 0; max-width: 72ch; }
+.updates-head .actions { margin-top: 24px; }
 
 .board {
   list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr);
@@ -416,7 +418,7 @@ button.crow:hover { background: var(--panel); }
 .foot > div { display: grid; gap: 8px; }
 .foot a { text-decoration: none; color: var(--text); }
 .foot a:hover { color: var(--accent); }
-.foot-note { margin-left: auto; color: var(--muted); font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; }
+.foot-note { margin-left: auto; min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--muted); font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; }
 
 @media (max-width: 860px) {
   .page { padding: 0 16px 40px; }
@@ -674,3 +676,6 @@ textarea.yaml {
 .setup-bar-done { background: color-mix(in srgb, var(--up) 10%, transparent); }
 .saved-secret { margin: 0; }
 .section-why { margin: 0 0 8px; }
+
+/* Narrower desktop windows: the build details go before anything wraps. */
+@media (max-width: 1280px) { .hide-md { display: none; } }
