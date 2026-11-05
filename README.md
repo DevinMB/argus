@@ -8,9 +8,9 @@ Argus checks your services and pages you when one stops answering. A small compa
 
 ## What it does
 
-- **Watches** anything with a URL, a port or an address, every minute; three failures in a row and it pages you on Telegram (or hands off to your Prometheus).
+- **Watches** anything with a URL, a port or an address, every minute; three failures in a row and it pages you on Telegram (or hands off to your Prometheus). Pause one you already know is down.
 - **Knows your hosts.** One command adds a host; Argus then shows its containers, disks, failed services and pending updates, and suggests a check for every port its containers publish.
-- **Patches** each host in its own weekly window, one host at a time, never on Sunday. How far it goes depends on the host's safety net: security updates only until it has a backup Argus can see; all updates and reboots once that backup has passed a restore test.
+- **Patches** each host in its own weekly window, one host at a time, never on Sunday. How far it goes depends on the host's safety net: security updates only until it has a backup Argus can see; all updates and reboots once it has one (a restore test is encouraged, not required) or a ZFS root it can snapshot. Already patched by something else? Tell Argus, and it stays out.
 - **Deploys from git.** Keep each host's Compose stacks in a repo; a merge deploys them, a stack that does not come up healthy is rolled back, and stacks already running can be adopted in place with one button.
 - **Follows your apps' updates** on GitHub: Dependabot's PRs, CI, merges and builds, to "running on its host".
 - **Guides you in.** A new install opens on a short checklist that takes you from nothing to your first host watched, patched and deploying.

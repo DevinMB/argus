@@ -34,7 +34,7 @@ describe("ringOrder", () => {
 
 describe("isPublic", () => {
   it.each([
-    [{ kind: "http", target: "https://sassyroutes.devinbutts.net/" }, true],
+    [{ kind: "http", target: "https://status.example.com/" }, true],
     [{ kind: "http", target: "http://192.0.2.5:8123/" }, false],
     [{ kind: "http", target: "http://homepage:3000/" }, false],
     [{ kind: "tcp", target: "192.0.2.250:9092" }, false],

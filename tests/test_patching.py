@@ -157,8 +157,8 @@ def test_a_host_left_without_a_backup_on_purpose_is_never_paged_about_one(env):
     # v2's side of the 2026-11-02 false page: Argus only watches a backup the
     # owner names for a host, so a host left out on purpose has nothing to go stale.
     c, csrf, rt, clock = env
-    lab = enroll(c, csrf, "rover-lab")
-    c.put("/api/patching/rover-lab", headers=csrf, json=PLAN)
+    lab = enroll(c, csrf, "spare-lab")
+    c.put("/api/patching/spare-lab", headers=csrf, json=PLAN)
     job_ok(c, rt, clock, "nas-backup")  # someone else's backup, weeks ago
     clock.now += 30 * 86400
     run = report(c, lab, local=TUE_0305)["patch"]
