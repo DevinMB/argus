@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { send } from "../api.js";
 import { agoText, safeHref } from "../lib.js";
 
-// GitHub app names are unique across GitHub, so the default carries this host's name.
-const defaultName = () => `Argus ${window.location.hostname}`.replace(/[^A-Za-z0-9 ._-]/g, "-").slice(0, 34);
+// GitHub app names are unique across GitHub ("Argus" is taken), so the default
+// carries the account it is made for: "Argus for octocat".
+export const appName = (owner) => (owner ? `Argus for ${owner}` : "Argus").slice(0, 34);
 
 function Ext({ href, children }) {
   const safe = safeHref(href);
@@ -12,16 +13,18 @@ function Ext({ href, children }) {
 
 // "Connect GitHub": Argus makes its own GitHub App through GitHub's manifest flow.
 function Connect({ session, setError }) {
-  const [name, setName] = useState(defaultName);
-  const [org, setOrg] = useState("");
+  const [owner, setOwner] = useState(""); // your username, or the organization
+  const [custom, setCustom] = useState(null); // a name typed by hand wins
   const [where, setWhere] = useState("me");
+  const name = custom ?? appName(owner);
+  const org = where === "org" ? owner : "";
   const [busy, setBusy] = useState(false);
   const go = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
       const m = await send("POST", "/api/github/manifest",
-        { url: window.location.origin, name, org: where === "org" ? org : "" }, session.csrf);
+        { url: window.location.origin, name, org }, session.csrf);
       // GitHub takes the manifest as a form post; the browser goes there and back.
       const form = document.createElement("form");
       form.method = "post";
@@ -46,22 +49,24 @@ function Connect({ session, setError }) {
         which repos it may see. It can only read: pull requests, CI runs, security alerts and code.
         Nothing needs to reach Argus from the internet; it asks GitHub every minute.
       </p>
-      <label className="field">
-        <span>App name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} required minLength={3} maxLength={34} />
-        <small>Unique across GitHub. If GitHub says the name is taken, change it here and try again.</small>
-      </label>
       <div className="field">
         <span>Make it under</span>
         <label className="toggle"><input type="radio" checked={where === "me"} onChange={() => setWhere("me")} />
           <span>My personal account</span></label>
         <label className="toggle"><input type="radio" checked={where === "org"} onChange={() => setWhere("org")} />
           <span>An organization I own</span></label>
-        {where === "org" && (
-          <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="organization name"
-                 aria-label="Organization" required pattern="[A-Za-z0-9\-]{1,39}" spellCheck="false" />
-        )}
       </div>
+      <label className="field">
+        <span>{where === "org" ? "Organization" : "Your GitHub username"}</span>
+        <input value={owner} onChange={(e) => setOwner(e.target.value.trim())} required
+               pattern="[A-Za-z0-9\-]{1,39}" spellCheck="false" autoComplete="username"
+               placeholder={where === "org" ? "my-org" : "octocat"} />
+      </label>
+      <label className="field">
+        <span>App name</span>
+        <input value={name} onChange={(e) => setCustom(e.target.value)} required minLength={3} maxLength={34} />
+        <small>GitHub app names are unique across GitHub, so it carries your name. Taken anyway? Change it here and try again.</small>
+      </label>
       <div className="actions">
         <button className="btn btn-primary" disabled={busy}>{busy ? "Going to GitHub…" : "Connect GitHub"}</button>
       </div>
