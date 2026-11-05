@@ -425,3 +425,22 @@ def test_api_without_a_token(tmp_path, config_file, prober):
         assert client.get("/api/updates").json()["enabled"] is False
         assert client.get("/api/checks/web").json()["track"] is None
         assert "argus_repo_" not in client.get("/metrics").text
+
+
+def test_track_green_update_that_never_merged_needs_a_look():
+    up = {"number": 11, "title": "Bump surefire", "url": "u", "ci": "success",
+          "waits_for_you": False, "created_at": NOW - 7200}
+    s = track(state(updates=[up]), UP, FRESH, NOW)
+    assert s[0]["status"] == "waiting" and "merge gate" in s[0]["detail"]
+    fresh = {**up, "created_at": NOW - 600}
+    assert track(state(updates=[fresh]), UP, FRESH, NOW)[0]["status"] == "running"
+
+
+def test_one_failed_poll_is_not_shown():
+    p = Poller("t0k", clock=lambda: NOW)
+    p.last_success, p.last_error, p.failures = NOW, "HTTP 500", 1
+    assert p.shown_error == ""
+    p.failures = 3
+    assert p.shown_error == "HTTP 500"
+    p.last_success, p.failures = None, 1
+    assert p.shown_error == "HTTP 500"
