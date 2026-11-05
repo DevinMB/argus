@@ -166,8 +166,8 @@ export default function App() {
             {error ? "API unreachable" : stalled ? "scheduler stalled" : "live"}
           </span>
           {fetchedAt && <span className="hide-sm">updated {agoText((Date.now() - fetchedAt) / 1000)}</span>}
-          {data && <span className="hide-sm">config {data.info.config}</span>}
-          {data && <span className="hide-sm">build {data.info.commit.slice(0, 7)}</span>}
+          {data && <span className="hide-sm hide-md">config {data.info.config}</span>}
+          {data && <span className="hide-sm hide-md">build {data.info.commit.slice(0, 7)}</span>}
           {session && (session.signed_in
             ? <a className="top-link" href="#/account" aria-current={view === "account" ? "page" : undefined}>Account</a>
             : <a className="top-link" href="#/account">{session.setup_needed ? "Set up" : "Sign in"}</a>)}
