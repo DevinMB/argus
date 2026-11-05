@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { send } from "../api.js";
 
 // The first-run checklist: one next step at a time, each with why it matters.
@@ -53,6 +53,38 @@ export default function GetStarted({ start, session, onWatch, onAddCheck, reload
         ))}
       </ol>
     </section>
+  );
+}
+
+// The checklist on every other page while setup is unfinished: where you are,
+// what is next, and a way back. When a step gets done here, it says so.
+export function SetupBar({ start, session, view }) {
+  const before = useRef(null);
+  const [justDone, setJustDone] = useState(null);
+  useEffect(() => {
+    if (!start) return;
+    const done = new Set(start.steps.filter((s) => s.done).map((s) => s.key));
+    if (before.current) {
+      const fresh = start.steps.find((s) => done.has(s.key) && !before.current.has(s.key));
+      if (fresh) setJustDone(fresh.title);
+    }
+    before.current = done;
+  }, [start]);
+  if (!session?.signed_in || !start || start.hidden || view === "checks") return null;
+  const next = start.steps.find((s) => !s.done);
+  if (!next && !justDone) return null;
+  const here = next && next.href === `#/${view}`;
+  return (
+    <p className={`banner setup-bar ${justDone ? "setup-bar-done" : ""}`} role="status">
+      {justDone && <span><span className="st-up">Done:</span> {justDone}. </span>}
+      {next ? (
+        <span>
+          Setup, {start.done} of {start.steps.length}. {here ? "This page: " : "Next: "}<strong>{next.title}</strong>.{" "}
+          {!here && next.href && next.key !== "checks" && <a href={next.href}>{next.action}</a>}
+          {(here || next.key === "checks") && <a href="#">Back to the checklist</a>}
+        </span>
+      ) : <span>Setup is complete. <a href="#">Home</a></span>}
+    </p>
   );
 }
 

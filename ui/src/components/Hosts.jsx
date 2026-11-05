@@ -380,6 +380,11 @@ function NotFromGit({ host, session, reload }) {
   return (
     <section>
       <h4 className="eyebrow">running here, not deployed by Argus</h4>
+      <p className="muted small section-why">
+        Compose projects started by hand or another tool. <strong>Deploy from git</strong> puts each
+        one's compose file in your deploy repo (its secrets stay in Argus) and from then on a merge
+        redeploys it, in the same folder, with no restart if nothing changed.
+      </p>
       <ul className="host-list suggest">{host.adoptable.map((p) => (
         <li key={p.project}>
           <span className="dot dot-unknown" />
@@ -429,11 +434,22 @@ function Host({ host, session, onRemoved, suggestions, onWatch, refs }) {
       {host.stacks?.length > 0 && (
         <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
       )}
-      {r?.containers && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} /></section>}
+      {r?.containers?.length > 0 && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} /></section>}
+      {r && !r.containers?.length && /-pve$/.test(r.kernel || "") && (
+        <p className="muted small">
+          This is a Proxmox server: your apps run in its VMs and containers, not on it. Argus watches
+          its disks, updates and services here. To see an app's containers, add Argus to the guest that
+          runs it. Patched by your own Proxmox tooling? Say so under patching.
+        </p>
+      )}
       <NotFromGit host={host} session={session} reload={onRemoved} />
       {suggestions?.length > 0 && (
         <section>
           <h4 className="eyebrow">not watched yet</h4>
+          <p className="muted small section-why">
+            Ports these containers publish that no check covers. <strong>Watch</strong> adds a check,
+            so Argus tells you when one stops answering.
+          </p>
           <ul className="host-list suggest">{suggestions.map((g) => (
             <li key={g.port}><span className="dot dot-unknown" />
               <span className="host-item">{g.container} <span className="muted mono">:{g.port}</span></span>

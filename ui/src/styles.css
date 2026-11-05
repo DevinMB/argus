@@ -667,3 +667,10 @@ textarea.yaml {
 .adopt h5 { margin: 0; }
 .adopt p { margin: 0; }
 .blockers { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+
+/* The setup bar: on every page but home while the checklist is unfinished. */
+.setup-bar { border-color: var(--accent); }
+.setup-bar a { margin-left: 4px; }
+.setup-bar-done { background: color-mix(in srgb, var(--up) 10%, transparent); }
+.saved-secret { margin: 0; }
+.section-why { margin: 0 0 8px; }

@@ -9,7 +9,7 @@ import SignIn from "./components/SignIn.jsx";
 import CheckDrawer from "./components/CheckDrawer.jsx";
 import CheckGrid from "./components/CheckGrid.jsx";
 import Asides from "./components/Asides.jsx";
-import GetStarted, { coverageLine } from "./components/GetStarted.jsx";
+import GetStarted, { coverageLine, SetupBar } from "./components/GetStarted.jsx";
 import Heartbeats from "./components/Heartbeats.jsx";
 import Hosts from "./components/Hosts.jsx";
 import Jobs from "./components/Jobs.jsx";
@@ -186,6 +186,8 @@ export default function App() {
           The newest argus.yml was rejected; the previous config is still running.
         </p>
       )}
+
+      <SetupBar start={data?.start} session={session} view={view} />
 
       {(locked || (settingsView && session && !session.signed_in)) && (
         <SignIn session={session} onSession={setSession}

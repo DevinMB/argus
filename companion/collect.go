@@ -335,14 +335,17 @@ func (c *Collector) pendingUpdates() *Updates {
 		u.Pending, u.Security = &n, &sec
 	case has("dnf"):
 		u.Manager = "dnf"
-		out, code, err := c.run("dnf", "-q", "-C", "check-update")
+		// The service's filesystem is read-only outside its own folder, and dnf
+		// writes its log even for a cache-only read: point the log there.
+		logdir := "--setopt=logdir=" + defaultState
+		out, code, err := c.run("dnf", "-q", "-C", logdir, "check-update")
 		if err != nil || (code != 0 && code != 100) {
 			u.Error = commandError("dnf check-update", code, err)
 			return u
 		}
 		n := parseDnfCheckUpdate(out)
 		u.Pending = &n
-		if out, code, err := c.run("dnf", "-q", "-C", "updateinfo", "list", "--security"); err == nil && code == 0 {
+		if out, code, err := c.run("dnf", "-q", "-C", logdir, "updateinfo", "list", "--security"); err == nil && code == 0 {
 			sec := len(nonEmptyLines(out))
 			u.Security = &sec
 		}
