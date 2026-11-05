@@ -272,13 +272,13 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
       <div className="form-grid">
         <label className="field"><span>Day</span>
           <select value={p.day} onChange={(e) => set("day", Number(e.target.value))}>
-            {DAYS.map((d, i) => (i < 6 || p.allow_sunday) && <option key={d} value={i}>{d}</option>)}
+            {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
           </select></label>
         <label className="field"><span>Time (the host's clock)</span>
           <input type="time" value={p.time} onChange={(e) => set("time", e.target.value)} required /></label>
         <label className="field"><span>Updates</span>
           <select value={p.level} onChange={(e) => set("level", e.target.value)}>
-            <option value="full">All, when its safety net allows</option>
+            <option value="full">All of them</option>
             <option value="security">Security only</option>
           </select></label>
         <label className="field"><span>Its backup</span>
@@ -286,6 +286,9 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
             <option value="">None yet</option>
             {refs.map((r) => <option key={r} value={r}>{r.replace(":", ": ")}</option>)}
           </select></label>
+        <label className="field"><span>Recent means (days)</span>
+          <input type="number" min="1" max="366" value={p.backup_days}
+            onChange={(e) => set("backup_days", Number(e.target.value))} required /></label>
         <label className="field"><span>Its restore test (optional)</span>
           <select value={p.restore} onChange={(e) => set("restore", e.target.value)}>
             <option value="">None</option>
@@ -293,14 +296,13 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
           </select></label>
       </div>
       <small className="muted">
-        A backup or restore test is a job or timer that reports to Argus when it finishes. No fresh
-        backup (8 days) means no patch that week. A monthly restore test is optional, and lets
-        Argus install all updates and reboot.
+        Argus patches a host only when it can be brought back: its backup (a job or timer that
+        reports to Argus when it finishes) is more recent than the days you set here, or the host
+        has a ZFS root Argus snapshots first. A restore test now and then is how you know the
+        backup works: optional, and encouraged.
       </small>
       <label className="toggle"><input type="checkbox" checked={p.reboot} onChange={(e) => set("reboot", e.target.checked)} />
-        <span>Reboot when an update needs it<small>Only when the safety net allows all updates.</small></span></label>
-      <label className="toggle"><input type="checkbox" checked={p.accept_untested} onChange={(e) => set("accept_untested", e.target.checked)} />
-        <span>Allow all updates with a backup that was never restore-tested</span></label>
+        <span>Reboot when an update needs it</span></label>
       </>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="actions">
@@ -341,6 +343,8 @@ function Patching({ host, session, refs, reload }) {
             ? <>{pt.allowed[0].toUpperCase() + pt.allowed.slice(1)}, {DAYS[pt.plan.day]}s at {pt.plan.time} (host time).</>
             : "Not patched by Argus."}{" "}
           <span className="muted">Safety net: {pt.safety.net}.</span>
+          {pt.plan.restore && !pt.safety.tested && <span className="muted"> No restore test in the last 35 days.</span>}
+          {pt.plan.enabled && !pt.plan.restore && <span className="muted"> Never restore-tested: worth a try.</span>}
         </p>
       )}
       {pt.skipped && <p className="small st-failing">Not patched: {pt.skipped}.</p>}

@@ -2,7 +2,7 @@
 
 **Keep a homelab watched, patched and deployed, from one container.**
 
-Argus checks your services and pages you when one stops answering. A small companion on each host shows its containers, disks and pending updates, patches it in a weekly window as far as its backups make safe, and deploys your Compose stacks from git when you merge. No Prometheus, Grafana or Alertmanager needed, and no config files unless you want them.
+Argus checks your services and pages you when one stops answering. A small companion on each host shows its containers, disks and pending updates, patches it in a weekly window once it has a recent backup, and deploys your Compose stacks from git when you merge. No Prometheus, Grafana or Alertmanager needed, and no config files unless you want them.
 
 ![The Argus home page: checks, a ring of their status, and the getting-started checklist](docs/screenshots/home.png)
 
@@ -10,7 +10,7 @@ Argus checks your services and pages you when one stops answering. A small compa
 
 - **Watches** anything with a URL, a port or an address, every minute; three failures in a row and it pages you on Telegram (or hands off to your Prometheus). Pause one you already know is down.
 - **Knows your hosts.** One command adds a host; Argus then shows its containers, disks, failed services and pending updates, and suggests a check for every port its containers publish.
-- **Patches** your hosts on a weekly schedule, one at a time, never on Sunday. A host without a backup gets security updates only. Once Argus can see a backup (or a ZFS snapshot), it gets every update and reboots when needed. Already patching a host another way? Tell Argus and it leaves that host alone.
+- **Patches** each host on the weekly schedule you choose, one host at a time, once it has a backup Argus can see. You decide how recent that backup must be, how far updates go, and whether it may reboot. Already patching a host another way? Tell Argus and it leaves that host alone.
 - **Deploys from git.** Keep each host's Compose stacks in a repo; a merge deploys them, a stack that does not come up healthy is rolled back, and stacks already running can be adopted in place with one button.
 - **Follows your apps' updates** on GitHub: Dependabot's PRs, CI, merges and builds, to "running on its host".
 - **Guides you in.** A new install opens on a short checklist that takes you from nothing to your first host watched, patched and deploying.

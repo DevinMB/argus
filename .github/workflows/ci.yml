@@ -37,7 +37,7 @@ jobs:
           exit-code: "1"
       - name: Smoke test
         run: |
-          mkdir -p cfg && printf 'checks:\n  - {name: self, kind: tcp, target: "127.0.0.1:8080", interval: 10}\n' > cfg/argus.yml
+          mkdir -p cfg && printf 'checks:\n  - {name: self, kind: tcp, target: "127.0.0.1:8080", interval: 10}\nheartbeats:\n  - {name: runner-backup, max_age: 86400}\n' > cfg/argus.yml
           # A deploy repo as a folder: the runner (enrolled below) runs one stack.
           mkdir -p deploy/hosts deploy/sites/ci/hello && echo sites/ci/hello > deploy/hosts/runner
           cat > deploy/sites/ci/hello/compose.yml <<'EOF'
@@ -158,11 +158,14 @@ jobs:
           curl -sf localhost:8098/keep.txt | grep -qx kept                # its data, in place
           sudo grep -q "GREETING='old'" /opt/legacy/hello2/.env           # its .env, now from Argus
 
-          # Patching: "Patch now" runs security updates in a transient unit, outside the
-          # companion's sandbox, and reports how it went. (Sundays allowed for this
-          # one runner, so the build passes on any day.)
+          # Patching: no backup, no patching; with a recent one, "Patch now" runs
+          # security updates (no reboot, as chosen) in a transient unit, outside the
+          # companion's sandbox, and reports how it went.
+          test "$(curl -sk -o /dev/null -w '%{http_code}' -b jar -H "X-CSRF-Token: $csrf" -X POST \
+            https://localhost:8080/api/patching/runner/now)" = 409
+          curl -skf -X POST https://localhost:8080/heartbeat/runner-backup
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' -X PUT \
-            -d '{"enabled":false,"day":1,"time":"03:00","allow_sunday":true}' \
+            -d '{"enabled":false,"day":1,"time":"03:00","level":"security","reboot":false,"backup":"heartbeat:runner-backup"}' \
             https://localhost:8080/api/patching/runner
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/patching/runner/now
           for _ in $(seq 120); do

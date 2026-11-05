@@ -47,7 +47,7 @@ from argus.auth import COOKIE, SESSION_DAYS, Auth, AuthError, Session
 from argus.companions import REPORT_EVERY, EnrollError, Signer
 from argus.deploys import BRANCH, ENV_KEY, PULL_TOKEN, STACK, WRITE_TOKEN, Deploys
 from argus.metrics import registry
-from argus.patching import DAYS, REQUEST, Patching
+from argus.patching import REQUEST, Patching
 from argus.probes import Result
 from argus.runtime import Runtime
 from argus.settings import Settings, load_key
@@ -255,9 +255,8 @@ class PatchPlan(BaseModel):
     level: Literal["security", "full"] = "full"
     reboot: bool = True
     backup: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
+    backup_days: int = Field(8, ge=1, le=366)  # how recent the backup must be
     restore: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
-    accept_untested: bool = False
-    allow_sunday: bool = False
     elsewhere: bool = False
     elsewhere_job: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
 
@@ -796,9 +795,9 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         if body.enabled and body.elsewhere:
             raise HTTPException(422, "a host patched by something else gets no Argus window: "
                                      "two tools patching one host would fight")
-        if body.day == 6 and not body.allow_sunday:
-            raise HTTPException(422, f"{DAYS[6]}s belong to backups; pick another day, or "
-                                     "allow Sundays for this host")
+        if body.enabled and not body.backup and not (c["report"] or {}).get("snapshot"):
+            raise HTTPException(422, "link a backup first: Argus only patches a host it can "
+                                     "bring back (or choose Something else patches it)")
         pt = request.app.state.patching
         pt.set_plan(host, body.model_dump())
         return pt.view(host, c["report"])
@@ -810,6 +809,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             raise HTTPException(409, f"{host} is monitoring only")
         if request.app.state.patching.plan(host)["elsewhere"]:
             raise HTTPException(409, f"{host} is patched by something else")
+        if not request.app.state.patching.safety(host, c["report"])["ok"]:
+            raise HTTPException(409, f"{host} has no recent backup, so Argus will not patch it")
         request.app.state.settings.set(REQUEST + host, True)
         return request.app.state.patching.view(host, c["report"])
 
