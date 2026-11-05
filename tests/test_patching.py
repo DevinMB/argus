@@ -44,48 +44,51 @@ def job_ok(c, rt, clock, name):
     assert r.status_code == 204
 
 
-def test_the_window_grants_one_run_with_what_the_safety_net_allows(env):
+def test_no_backup_no_patching(env):
+    # Design decision 12: Argus patches only a host it can bring back.
     c, csrf, rt, clock = env
     nas = enroll(c, csrf, "nas")
-    assert c.put("/api/patching/nas", headers=csrf, json=PLAN).status_code == 200
+    r = c.put("/api/patching/nas", headers=csrf, json=PLAN)
+    assert r.status_code == 422 and "link a backup first" in r.json()["detail"]
+    assert c.post("/api/patching/nas/now", headers=csrf).status_code == 409
+    assert "patch" not in report(c, nas, local=TUE_0305)
+    view = c.get("/api/companions").json()["companions"][0]["patching"]
+    assert view["allowed"] == "nothing until it has a backup"
+    assert c.app.state.alerter.problems() == {}  # patching was never on: nothing to page
+
+
+def test_the_window_grants_one_run_as_far_as_the_owner_chose(env):
+    c, csrf, rt, clock = env
+    nas = enroll(c, csrf, "nas")
+    plan = {**PLAN, "backup": "job:nas-backup"}
+    assert c.put("/api/patching/nas", headers=csrf, json=plan).status_code == 200
+    job_ok(c, rt, clock, "nas-backup")
     assert "patch" not in report(c, nas, local={**TUE_0305, "time": "02:59"})
     run = report(c, nas, local=TUE_0305)["patch"]
-    # No safety net: security updates only, and no reboot, whatever the plan asks.
-    assert run["level"] == "security" and run["reboot"] is False
+    assert run["level"] == "full" and run["reboot"] is True  # no restore test needed
     assert "patch" not in report(c, nas, local=TUE_0305,
                                  patch={"run": run["run"], "state": "running"})
     report(c, nas, local=TUE_0305, patch={"run": run["run"], "state": "ok",
                                           "summary": "12 packages"})
     assert "patch" not in report(c, nas, local={**TUE_0305, "time": "04:00"})  # once a window
-    view = c.get("/api/companions").json()["companions"][0]["patching"]
-    assert view["runs"][0]["result"] == "ok" and view["safety"]["net"] == "none"
-
-
-def test_how_far_a_run_goes_follows_the_backups(env):
-    c, csrf, rt, clock = env
-    nas = enroll(c, csrf, "nas")
-    plan = {**PLAN, "backup": "job:nas-backup"}
-    c.put("/api/patching/nas", headers=csrf, json=plan)
-    job_ok(c, rt, clock, "nas-backup")
-    v = c.put("/api/patching/nas", headers=csrf, json=plan).json()
-    assert v["safety"]["net"] == "a fresh backup, never restore-tested" and not v["safety"]["full"]
-    v = c.put("/api/patching/nas", headers=csrf, json={**plan, "accept_untested": True}).json()
-    assert v["safety"]["full"]
+    v = c.get("/api/companions").json()["companions"][0]["patching"]
+    assert v["runs"][0]["result"] == "ok" and v["safety"]["net"] == "a recent backup"
+    assert not v["safety"]["tested"]  # shown and encouraged, never required
+    # The owner may choose less: security updates, no reboot.
+    v = c.put("/api/patching/nas", headers=csrf, json={
+        **plan, "level": "security", "reboot": False, "restore": "job:nas-restore-test"}).json()
+    assert v["allowed"] == "security updates, no reboots"
     job_ok(c, rt, clock, "nas-restore-test")
-    v = c.put("/api/patching/nas", headers=csrf,
-              json={**plan, "restore": "job:nas-restore-test"}).json()
-    assert v["safety"]["net"] == "a fresh backup with a recent restore test"
-    run = report(c, nas, local=TUE_0305)["patch"]
-    assert run["level"] == "full" and run["reboot"] is True
+    assert c.get("/api/companions").json()["companions"][0]["patching"]["safety"]["tested"]
     # A ZFS root is a safety net of its own.
     zfs = enroll(c, csrf, "zfs-box")
-    c.put("/api/patching/zfs-box", headers=csrf, json=PLAN)
-    report(c, nas, local=TUE_0305, patch={"run": run["run"], "state": "ok"})
+    report(c, zfs, local={**TUE_0305, "time": "01:00"}, snapshot="zfs")
+    assert c.put("/api/patching/zfs-box", headers=csrf, json=PLAN).status_code == 200
     zrun = report(c, zfs, local=TUE_0305, snapshot="zfs")["patch"]
     assert zrun["level"] == "full" and zrun["snapshot"] is True
 
 
-def test_a_stale_backup_skips_the_window_and_pages(env):
+def test_the_owner_says_how_recent_a_backup_must_be(env):
     c, csrf, rt, clock = env
     nas = enroll(c, csrf, "nas")
     c.put("/api/patching/nas", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
@@ -93,27 +96,32 @@ def test_a_stale_backup_skips_the_window_and_pages(env):
     clock.now += 9 * 86400
     assert "patch" not in report(c, nas, local=TUE_0305)
     view = c.get("/api/companions").json()["companions"][0]["patching"]
-    assert view["skipped"] == "its backup (job:nas-backup) is 9 days old"
+    assert view["skipped"] == "its backup (job:nas-backup) is 9 days old, over its limit of 8"
     titles = [p.title for p in c.app.state.alerter.problems().values()]
     assert "nas was not patched" in titles
+    # A monthly backup is fine for this owner: the same backup now counts.
+    c.put("/api/patching/nas", headers=csrf,
+          json={**PLAN, "backup": "job:nas-backup", "backup_days": 31})
+    assert "patch" in report(c, nas, local=TUE_0305)
 
 
-def test_one_host_at_a_time_and_never_on_sunday(env):
+def test_one_host_at_a_time_on_any_day(env):
     c, csrf, rt, clock = env
     a, b = enroll(c, csrf, "a"), enroll(c, csrf, "b")
+    job_ok(c, rt, clock, "nas-backup")
     for h in ("a", "b"):
-        c.put(f"/api/patching/{h}", headers=csrf, json=PLAN)
+        c.put(f"/api/patching/{h}", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
     run = report(c, a, local=TUE_0305)["patch"]
     assert "patch" not in report(c, b, local=TUE_0305)  # waits its turn
     report(c, a, local=TUE_0305, patch={"run": run["run"], "state": "ok"})
-    assert "patch" in report(c, b, local=TUE_0305)
-    r = c.put("/api/patching/a", headers=csrf, json={**PLAN, "day": 6})
-    assert r.status_code == 422 and "backups" in r.json()["detail"]
-    # Patch now on a Sunday is refused too, with the reason.
-    c.post("/api/patching/a/now", headers=csrf)
-    assert "patch" not in report(c, a, local={"weekday": 6, "time": "12:00",
-                                              "date": "2027-01-17"})
-    assert "Sunday" in c.get("/api/companions").json()["companions"][0]["patching"]["skipped"]
+    brun = report(c, b, local=TUE_0305)["patch"]
+    report(c, b, local=TUE_0305, patch={"run": brun["run"], "state": "ok"})
+    # Sunday is a day like any other: the owner picks.
+    sun = {"weekday": 6, "time": "03:05", "date": "2027-01-17"}
+    r = c.put("/api/patching/a", headers=csrf,
+              json={**PLAN, "day": 6, "backup": "job:nas-backup"})
+    assert r.status_code == 200
+    assert "patch" in report(c, a, local=sun)
 
 
 def test_patch_now_stuck_runs_and_monitoring_only_hosts(env):
@@ -122,9 +130,12 @@ def test_patch_now_stuck_runs_and_monitoring_only_hosts(env):
     ro = enroll(c, csrf, "ro", read_only=True)
     assert c.post("/api/patching/ro/now", headers=csrf).status_code == 409
     assert "patch" not in report(c, ro, local=TUE_0305)
-    c.post("/api/patching/nas/now", headers=csrf)  # no plan needed for a one-off
+    c.put("/api/patching/nas", headers=csrf,
+          json={**PLAN, "enabled": False, "backup": "job:nas-backup"})
+    job_ok(c, rt, clock, "nas-backup")
+    c.post("/api/patching/nas/now", headers=csrf)  # a one-off, outside any window
     run = report(c, nas, local={"weekday": 3, "time": "15:00", "date": "2027-01-14"})["patch"]
-    assert run["level"] == "security"
+    assert run["level"] == "full"
     clock.now += 2 * 3600 + 1
     report(c, nas, local={"weekday": 3, "time": "17:01", "date": "2027-01-14"})
     view = c.get("/api/companions").json()["companions"]
@@ -151,20 +162,6 @@ def test_a_host_patched_by_something_else(env):
     # And the checklist counts it as patched.
     steps = {s["key"]: s for s in c.get("/api/start").json()["steps"]}
     assert steps["patching"]["done"]
-
-
-def test_a_host_left_without_a_backup_on_purpose_is_never_paged_about_one(env):
-    # v2's side of the 2026-11-02 false page: Argus only watches a backup the
-    # owner names for a host, so a host left out on purpose has nothing to go stale.
-    c, csrf, rt, clock = env
-    lab = enroll(c, csrf, "spare-lab")
-    c.put("/api/patching/spare-lab", headers=csrf, json=PLAN)
-    job_ok(c, rt, clock, "nas-backup")  # someone else's backup, weeks ago
-    clock.now += 30 * 86400
-    run = report(c, lab, local=TUE_0305)["patch"]
-    assert run["level"] == "security"  # no safety net: careful, but patched
-    report(c, lab, local=TUE_0305, patch={"run": run["run"], "state": "ok"})
-    assert c.app.state.alerter.problems() == {}
 
 
 def test_a_removed_hosts_plan_is_not_inherited_by_a_new_host_with_its_name(env):

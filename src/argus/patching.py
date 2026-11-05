@@ -1,21 +1,19 @@
-"""OS patching through companions (design decisions 7 and 8).
+"""OS patching through companions (design decisions 7 and 12).
 
-Each host has a weekly window in its own local time. The companion says what
-time it is there in every report; when the window opens, Argus decides whether
-it may patch and how far, and grants a run in its signed reply. Argus decides,
-so the rules hold whatever a host thinks:
+Each host has a weekly window in its own local time, on any day the owner
+picks. The companion says what time it is there in every report; when the
+window opens, Argus decides whether it may patch, and grants a run in its
+signed reply. Argus decides, so the rules hold whatever a host thinks:
 
-- never on Sunday (backups run then), unless the owner allowed it for a host;
+- no safety net, no patching: the host needs a backup that reports to Argus
+  and is newer than the owner's limit for it (default 8 days), or a ZFS root
+  it snapshots just before. A stale backup skips the window and pages;
 - one host at a time, across all hosts;
-- not on a monitoring-only host;
-- when the owner named a backup for the host, it must be fresh (8 days): no
-  fresh backup means no patch, and Argus pages to say why.
+- not on a monitoring-only host.
 
-How far a run may go follows the host's safety net:
-
-- none, or a backup never restore-tested: security updates only, no reboot;
-- a restore-tested backup, a snapshot before patching (ZFS root), or a
-  backup the owner accepted untested: all updates, and a reboot when needed.
+With a safety net, a run goes as far as the owner chose: security updates or
+all of them, and a reboot when one is needed if allowed. A restore test is
+optional: shown on the card, encouraged, never required.
 
 A run that reports nothing for two hours counts as failed.
 """
@@ -27,14 +25,14 @@ from collections.abc import Callable
 
 SETTINGS = "patch."  # + host: the host's schedule and safety net
 REQUEST = "patch.request."  # + host: "patch now" pressed
-FRESH = 8 * 86400  # a backup older than this is stale
-TESTED = 35 * 86400  # a restore test older than this no longer counts
+TESTED = 35 * 86400  # a restore test older than this is worth a nudge
 WINDOW = 3 * 3600  # a run may start up to three hours after the window opens
 STUCK = 2 * 3600
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 DEFAULTS = {"enabled": False, "day": 1, "time": "03:00", "level": "full", "reboot": True,
-            "backup": "", "restore": "", "accept_untested": False, "allow_sunday": False,
+            # The backup must be newer than backup_days for a run to go ahead.
+            "backup": "", "backup_days": 8, "restore": "",
             # Patched by another tool (Ansible, unattended-upgrades, ...): Argus never
             # patches it, and shows how that tool's job is doing when one is named.
             "elsewhere": False, "elsewhere_job": ""}
@@ -48,6 +46,11 @@ CREATE TABLE IF NOT EXISTS patch_runs (
 );
 CREATE INDEX IF NOT EXISTS patch_runs_host ON patch_runs (host, id);
 """
+
+
+def allowed(p: dict) -> str:
+    what = "all updates" if p["level"] == "full" else "security updates"
+    return what + (", and reboots when needed" if p["reboot"] else ", no reboots")
 
 
 def _minutes(hhmm: str) -> int:
@@ -100,22 +103,21 @@ class Patching:
         snapshot = (report or {}).get("snapshot") or ""
         backup_age = self._age(p["backup"]) if p["backup"] else None
         tested_age = self._age(p["restore"]) if p["restore"] else None
-        fresh = backup_age is not None and backup_age < FRESH
-        tested = fresh and tested_age is not None and tested_age < TESTED
-        full = bool(snapshot) or tested or (fresh and p["accept_untested"])
+        fresh = backup_age is not None and backup_age < p["backup_days"] * 86400
+        tested = tested_age is not None and tested_age < TESTED
         if snapshot:
             net = f"a {snapshot} snapshot before each run"
-        elif tested:
-            net = "a fresh backup with a recent restore test"
         elif fresh:
-            net = "a fresh backup, never restore-tested" + (
-                " (accepted)" if p["accept_untested"] else "")
+            net = "a recent backup"
+        elif p["backup"] and backup_age is not None:
+            net = f"its backup is {int(backup_age // 86400)} days old (limit {p['backup_days']})"
         elif p["backup"]:
-            net = "its backup is not fresh"
+            net = "its backup has never reported"
         else:
-            net = "none"
-        return {"net": net, "full": full, "snapshot": snapshot,
+            net = "none: link a backup to patch this host"
+        return {"net": net, "ok": bool(snapshot) or fresh, "snapshot": snapshot,
                 "backup": p["backup"], "backup_age": backup_age, "fresh": fresh,
+                "backup_days": p["backup_days"],
                 "restore": p["restore"], "tested_age": tested_age, "tested": tested}
 
     # --- runs ---
@@ -175,13 +177,13 @@ class Patching:
         if not manual and done_today:
             return None
         why = None
-        if weekday == 6 and not p["allow_sunday"]:
-            why = "it is Sunday there; Sundays belong to backups"
         safety = self.safety(host, report)
-        if p["backup"] and not safety["fresh"] and why is None:
+        if not safety["ok"]:
             age = safety["backup_age"]
-            why = (f"its backup ({p['backup']}) is {int(age // 86400)} days old"
-                   if age is not None else f"its backup ({p['backup']}) has never reported")
+            why = (f"its backup ({p['backup']}) is {int(age // 86400)} days old,"
+                   f" over its limit of {p['backup_days']}" if age is not None
+                   else f"its backup ({p['backup']}) has never reported" if p["backup"]
+                   else "it has no backup linked")
         if why:
             self.skipped[host] = why
             if manual:
@@ -190,8 +192,7 @@ class Patching:
         if self.running() is not None:
             return None  # one host at a time: this one waits its turn, quietly
         self.skipped.pop(host, None)
-        level = "full" if (p["level"] == "full" and safety["full"]) else "security"
-        reboot = bool(p["reboot"] and safety["full"])
+        level, reboot = p["level"], bool(p["reboot"])
         trigger = "manual" if manual else "window"
         with self.db:
             cur = self.db.execute(
@@ -235,8 +236,7 @@ class Patching:
         return {"plan": p, "safety": safety, "runs": runs, "elsewhere": self.elsewhere(p),
                 "skipped": self.skipped.get(host), "requested": bool(
                     self.settings.get(REQUEST + host)),
-                "allowed": "all updates, and reboots when needed" if safety["full"]
-                else "security updates only, no reboots"}
+                "allowed": allowed(p) if safety["ok"] else "nothing until it has a backup"}
 
     def problems(self, hosts: list[str]) -> list[tuple[str, str, str]]:
         """(key, title, detail) for the alerter: a failed newest run, a skipped window."""
