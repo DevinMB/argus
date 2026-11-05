@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      packages: write   # push to GHCR on main
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker build -t argus:ci --build-arg COMMIT=${{ github.sha }} .
@@ -176,7 +177,20 @@ jobs:
           id=$(jq -r '.companions[0].id' hosts.json)
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X DELETE https://localhost:8080/api/companions/$id
           sudo /usr/local/bin/argus-companion run --once 2>&1 | grep -q 'HTTP 401'
-      # No image push yet: v2 publishes to GHCR at launch (milestone M6).
+      # main only, and only in the published repo (forks and the pre-launch
+      # name build but do not push): what passed every step above is what
+      # people pull. :2 follows the newest build of major version 2.
+      - name: Push to GHCR
+        if: >-
+          github.repository == 'DevinMB/argus' && github.ref == 'refs/heads/main'
+          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/devinmb/argus
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in "sha-${GITHUB_SHA::7}" 2; do docker tag argus:ci "$IMAGE:$t"; docker push -q "$IMAGE:$t"; done
+          echo "### Pushed $IMAGE:sha-${GITHUB_SHA::7} and :2" >> "$GITHUB_STEP_SUMMARY"
 
   gate:
     needs: [test, image]
