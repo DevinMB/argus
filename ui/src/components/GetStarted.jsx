@@ -4,16 +4,26 @@ import { send } from "../api.js";
 // The first-run checklist: one next step at a time, each with why it matters.
 export default function GetStarted({ start, session, onWatch, onAddCheck, reload }) {
   const [picked, setPicked] = useState(null);
-  if (!start || start.hidden || start.done === start.steps.length) return null;
+  if (!start || start.done === start.steps.length) return null;
+  const show = (hidden) => send("PUT", "/api/start", { hidden }, session?.csrf).then(reload, () => {});
+  // Hidden is never a dead end: one line stays, to bring it back.
+  if (start.hidden) {
+    return session?.signed_in ? (
+      <p className="start-hidden muted small">
+        Get started, {start.done} of {start.steps.length} done.{" "}
+        <button className="link-button" onClick={() => show(false)}>Show the checklist</button>
+      </p>
+    ) : null;
+  }
   // The next undone step is open; any other opens when its title is pressed.
   const next = start.steps.find((s) => s.key === picked && !s.done) ?? start.steps.find((s) => !s.done);
-  const hide = () => send("PUT", "/api/start", { hidden: true }, session?.csrf).then(reload, () => {});
+  const hide = () => show(true);
   return (
     <section className="start panel" aria-label="Get started">
       <div className="start-head">
         <h2>Get started</h2>
         <span className="muted small">{start.done} of {start.steps.length} done</span>
-        {session?.signed_in && <button className="link-button small" onClick={hide}>Hide</button>}
+        {session?.signed_in && <button className="link-button small" onClick={hide}>Hide for now</button>}
       </div>
       <span className="bar" aria-hidden="true">
         <span className="fill-up" style={{ width: `${(100 * start.done) / start.steps.length}%` }} />
