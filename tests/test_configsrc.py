@@ -179,3 +179,20 @@ async def test_git_mode_reads_the_repo_and_saves_as_a_commit_or_a_pr(tmp_path, p
         assert r["saved"] == "pr" and r["url"].endswith("/pull/7")
         assert [w[0] for w in fake.writes[-3:]] == ["REF", "PUT", "PR"]
         assert "wiki" not in [x["name"] for x in c.get("/api/checks").json()]  # until merged
+
+
+async def test_a_wrong_path_says_so_and_reading_needs_no_write_token(tmp_path, prober, caplog):
+    # What happened on install day: the File box still said argus.yml.
+    caplog.set_level(logging.WARNING, logger="argus")
+    fake = FakeRepo()
+    rt = Runtime(tmp_path / "absent.yml", tmp_path / "argus.db", prober=prober)
+    poller = Poller("read", transport=httpx.MockTransport(fake))
+    with TestClient(create_app(rt, start_scheduler=False, poller=poller)) as c:
+        csrf = {"X-CSRF-Token": sign_up(c, caplog)["csrf"]}
+        r = c.put("/api/config/source", headers=csrf, json={
+            "source": "github", "repo": "ann/ops", "path": "argus.yml"})
+        assert r.status_code == 409 and "there is no argus.yml in ann/ops" in r.json()["detail"]
+        assert c.get("/api/config").json()["source"] == "argus" and fake.writes == []
+        view = c.put("/api/config/source", headers=csrf, json={
+            "source": "github", "repo": "ann/ops", "path": "argus/argus.yml"}).json()
+        assert view["source"] == "github" and "# ---- apps ----" in view["text"]
