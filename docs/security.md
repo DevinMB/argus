@@ -21,6 +21,7 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 - **Nothing listens on a host.** The companion only calls Argus, over HTTPS, and refuses any server whose key does not match the pin it got at install. A proxy or a wrong DNS entry cannot impersonate Argus.
 - **Every reply is signed** with Argus's ed25519 key, which the companion pinned at enrollment; the signature covers the host's id and a fresh nonce, so a reply cannot be replayed or sent to another host.
 - **The host decides what it will run.** `/etc/argus-companion/policy.json` on each host refuses, whatever Argus says: privileged containers, the host's network, PID, IPC or user namespace, the Docker socket, devices, capabilities beyond a short list, `unconfined` security options, and bind mounts from outside `/srv`, `/opt`, `/mnt`, `/media` or the stack's own folder. Changing it takes someone on the host. A file that does not parse refuses everything.
+- **Self-update is signed and pinned.** A companion replaces itself only with the build whose sha256 Argus put in its signed reply, downloaded over the pinned connection. A monitoring-only host never does, and `"manual_updates": true` in the host's policy turns it off.
 - **Monitoring only** is chosen at install, on the host; such a host never deploys, patches or shares files, whatever Argus says.
 - The service runs with `ProtectSystem=strict` and writes only its own folder. Package updates run in a separate transient unit started for each patch run.
 - Removing a host in Argus stops its token at once.

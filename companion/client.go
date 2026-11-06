@@ -181,6 +181,12 @@ type Reply struct {
 	Deploy      *DeployPlan `json:"deploy"`
 	Patch       *PatchGrant `json:"patch"`
 	Collect     []string    `json:"collect"` // Compose projects to read for adoption
+	Companion   *Build      `json:"companion"`
+}
+
+// Build is the companion Argus serves for this host's CPU.
+type Build struct {
+	SHA256 string `json:"sha256"`
 }
 
 // Domain separates these signatures from anything else the key might sign.

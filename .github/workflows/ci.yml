@@ -176,6 +176,20 @@ jobs:
           jq -e '.companions[0].patching.runs[0] | .result == "ok" and .level == "security" and .reboot == 0' hosts.json \
             || { jq -r '.companions[0].patching.runs[0].log' hosts.json | tail -60; exit 1; }
           curl -s localhost:8099/ | grep -q 'hello from argus'  # still serving after patching
+          # Self-update: a companion that differs from the build Argus serves replaces
+          # itself (outside its sandbox) and restarts, with no install command re-run.
+          served=$(docker exec argus sha256sum /app/companion/argus-companion-linux-amd64 | cut -d' ' -f1)
+          # A running binary cannot be written in place: swap in an altered copy.
+          sudo sh -c 'cp /usr/local/bin/argus-companion /tmp/stale && echo stale >> /tmp/stale && mv /tmp/stale /usr/local/bin/argus-companion'
+          test "$(sha256sum /usr/local/bin/argus-companion | cut -d' ' -f1)" != "$served"
+          sudo systemctl restart argus-companion
+          for _ in $(seq 40); do
+            [ "$(sha256sum /usr/local/bin/argus-companion | cut -d' ' -f1)" = "$served" ] && break; sleep 3
+          done
+          sudo journalctl -u argus-companion --no-pager | grep -E 'updated|update failed' | tail -3
+          test "$(sha256sum /usr/local/bin/argus-companion | cut -d' ' -f1)" = "$served"
+          for _ in $(seq 20); do systemctl is-active -q argus-companion && break; sleep 2; done
+          systemctl is-active argus-companion
           # Removing the host revokes its token: the companion says so in its log.
           id=$(jq -r '.companions[0].id' hosts.json)
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X DELETE https://localhost:8080/api/companions/$id

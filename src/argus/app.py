@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import hmac
 import json
 import os
@@ -60,6 +61,23 @@ TOKEN_FILE = Path(os.environ.get("ARGUS_GITHUB_TOKEN_FILE", "/run/secrets/github
 UI_DIR = Path(os.environ.get("ARGUS_UI", Path(__file__).resolve().parents[2] / "ui" / "dist"))
 # The companion builds (linux-amd64, linux-arm64), put there by the image build.
 COMPANION_DIR = Path(os.environ.get("ARGUS_COMPANION_DIR", "/app/companion"))
+_BUILDS: dict[str, tuple[float, str]] = {}
+
+
+def companion_sha256(arch: str) -> str:
+    """The sha256 of the companion build served for a CPU, "" when there is none.
+    Companions compare it with their own and update themselves when it differs."""
+    if arch not in ("amd64", "arm64"):
+        return ""
+    path = COMPANION_DIR / f"argus-companion-linux-{arch}"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return ""
+    if arch not in _BUILDS or _BUILDS[arch][0] != mtime:
+        _BUILDS[arch] = (mtime, hashlib.sha256(path.read_bytes()).hexdigest())
+    return _BUILDS[arch][1]
+
 INSTALL_SH = Path(__file__).with_name("companion-install.sh")
 MAX_COMPANION_REPORT = 512 * 1024  # bytes
 
@@ -1083,6 +1101,9 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                               "pull": await d.pull_credential() if due else None}
         if not row["read_only"] and (want := request.app.state.adoption.to_collect(row["name"])):
             body["collect"] = want
+        # A monitoring-only host keeps the program it has: it is not Argus's to change.
+        if not row["read_only"] and (sha := companion_sha256(rep.arch)):
+            body["companion"] = {"sha256": sha}
         run = pt.grant(row["name"], bool(row["read_only"]), rep.model_dump())
         if run:
             body["patch"] = run

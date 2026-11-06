@@ -148,6 +148,18 @@ def test_one_command_for_several_hosts(client, csrf, clock):
     late = new_code(client, csrf, hosts=5)["code"]
     clock.now += 3601
     assert "expired" in enroll(client, late, "late").json()["detail"]
+def test_replies_name_the_companion_build_to_update_to(client, csrf, tmp_path, monkeypatch):
+    import hashlib
+
+    import argus.app
+    monkeypatch.setattr(argus.app, "COMPANION_DIR", tmp_path)
+    (tmp_path / "argus-companion-linux-amd64").write_bytes(b"build 1")
+    me = enroll(client, new_code(client, csrf)["code"]).json()
+    ro = enroll(client, new_code(client, csrf, read_only=True)["code"], "ro").json()
+    reply = report(client, me["token"], arch="amd64")[0].json()
+    assert reply["companion"] == {"sha256": hashlib.sha256(b"build 1").hexdigest()}
+    assert "companion" not in report(client, me["token"], arch="riscv64")[0].json()
+    assert "companion" not in report(client, ro["token"], arch="amd64")[0].json()
 
 
 def test_removing_a_host_revokes_its_token(client, csrf):
