@@ -119,12 +119,6 @@ export default function App() {
     if (!session?.signed_in) return setEditable(false);
     send("GET", "/api/config").then((c) => setEditable(c.editable), () => setEditable(false));
   }, [session?.signed_in, view]);
-  // "Watch" on the Hosts page: open the Checks page with the form filled in.
-  useEffect(() => {
-    const on = (e) => { setSaved(null); setEditing({ initial: e.detail }); };
-    window.addEventListener("argus-watch", on);
-    return () => window.removeEventListener("argus-watch", on);
-  }, []);
   const afterSave = (out) => {
     setEditing(null);
     setSaved(savedText(out));

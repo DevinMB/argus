@@ -517,6 +517,12 @@ function HostRow({ host, guest, child, toggle }) {
   );
 }
 
+// `command` in a help step becomes its own copyable line.
+function withCode(text) {
+  return text.split(/`([^`]+)`/).map((part, i) => (i % 2
+    ? <span key={i} className="help-cmd"><code>{part}</code><Copy text={part} /></span> : part));
+}
+
 // Why adding Argus to a guest failed, what to do next, and the raw output.
 function InstallHelp({ guest, install }) {
   const help = installHelp(install.output, guest);
@@ -524,7 +530,7 @@ function InstallHelp({ guest, install }) {
     <div className="install-help">
       <strong>{help.title}</strong>
       {help.lead && <p className="install-lead muted">{help.lead}</p>}
-      <ol>{help.steps.map((s) => <li key={s}>{s}</li>)}</ol>
+      <ol>{help.steps.map((s) => <li key={s}>{withCode(s)}</li>)}</ol>
       {help.manual && (
         <p><a className="btn btn-small" href={`#/hosts?add=${encodeURIComponent(guestHostName(guest.name || `guest-${guest.vmid}`))}`}>
           Add it by hand instead</a> <span className="muted small">Run Add a host's command in the guest; it joins under this name.</span></p>
@@ -669,7 +675,7 @@ function Guests({ host, hostNames, session, reload }) {
                   {gi.skipped.has(g.vmid) ? "Unskip" : "Skip"}</button>
               )}
             </span>
-            {inst?.state === "failed" && !gi.skipped.has(g.vmid) && (
+            {inst?.state === "failed" && !argus && !gi.skipped.has(g.vmid) && (
               <div className="row-wide"><InstallHelp guest={g} install={inst} /></div>
             )}
           </li>
@@ -763,7 +769,47 @@ function HostActions({ host, session, reload }) {
   );
 }
 
-function Overview({ host, suggestions, onWatch, session }) {
+// Ports no check covers, each a check one press away, added here without leaving the host.
+function NotWatched({ suggestions, session, reload }) {
+  const [busy, setBusy] = useState(null);
+  const [done, setDone] = useState(null);
+  const [error, setError] = useState(null);
+  const watch = async (g, page) => {
+    setBusy(g.port);
+    setError(null);
+    try {
+      const config = await send("GET", "/api/config");
+      const entry = { ...g.check, severity: page ? "critical" : "warning", interval: 60 };
+      await send("POST", "/api/config/entries", { kind: "checks", entry, replace: null, base: config.base }, session.csrf);
+      setDone(`${entry.name} is watched${page ? "; Argus alerts you when it goes down" : ""}.`);
+      reload();
+    } catch (e) {
+      setError(`${g.container}: ${e.message}`);
+    }
+    setBusy(null);
+  };
+  return (
+    <Section title="not watched yet"
+      about={<>Ports these containers publish that no check covers. <strong>Watch</strong> adds a check that shows in
+        Argus when the port stops answering; <strong>Watch and alert me</strong> also sends an alert (a critical
+        check). Change or remove either later on the Checks page.</>}>
+      {done && <p className="form-ok small" role="status">{done} <a href="#/">See it on Checks</a></p>}
+      <ul className="rows">{suggestions.map((g) => (
+        <li key={g.port}><span className="dot dot-unknown" />
+          <span className="row-main">{g.container} <span className="muted mono">:{g.port}</span>
+            <span className="row-sub muted mono">{g.check.target}</span></span>
+          <span className="row-note" />
+          <span className="row-act">{session?.signed_in && <>
+            <button className="btn btn-small" disabled={busy !== null} onClick={() => watch(g, false)}>Watch</button>
+            <button className="btn btn-small" disabled={busy !== null} onClick={() => watch(g, true)}>Watch and alert me</button>
+          </>}</span></li>
+      ))}</ul>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </Section>
+  );
+}
+
+function Overview({ host, suggestions, session, reload }) {
   const r = host.report ?? {};
   const look = attention(host);
   return (
@@ -803,22 +849,12 @@ function Overview({ host, suggestions, onWatch, session }) {
           ))}</ul>
         </Section>
       )}
-      {suggestions?.length > 0 && (
-        <Section title="not watched yet"
-          about="Ports these containers publish that no check covers. Watch adds a check, so Argus tells you when one stops answering.">
-          <ul className="rows">{suggestions.map((g) => (
-            <li key={g.port}><span className="dot dot-unknown" />
-              <span className="row-main">{g.container} <span className="muted mono">:{g.port}</span></span>
-              <span className="row-note" />
-              <span className="row-act">{session?.signed_in && <button className="btn btn-small" onClick={() => onWatch(g.check)}>Watch</button>}</span></li>
-          ))}</ul>
-        </Section>
-      )}
+      {suggestions?.length > 0 && <NotWatched suggestions={suggestions} session={session} reload={reload} />}
     </>
   );
 }
 
-function HostDetail({ host, tab, session, reload, refs, backups, hostNames, suggestions, onWatch }) {
+function HostDetail({ host, tab, session, reload, refs, backups, hostNames, suggestions }) {
   const r = host.report ?? {};
   const [tone, word] = STATUS[host.status];
   const tabs = [["overview", "Overview"]];
@@ -845,7 +881,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
         ))}
       </nav>
       <div className="hd-body">
-        {current === "overview" && <Overview host={host} suggestions={suggestions} onWatch={onWatch} session={session} />}
+        {current === "overview" && <Overview host={host} suggestions={suggestions} session={session} reload={reload} />}
         {current === "containers" && (
           <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never page.">
             {r.containers.length ? <Containers list={r.containers} host={host} session={session} reload={reload} />
@@ -891,14 +927,13 @@ export default function Hosts({ data, session, reload, start, refs = [] }) {
   const quiet = hosts.filter((h) => h.status === "quiet").length;
   const backups = data?.backups ?? [];
   const hostNames = new Set(hosts.flatMap((h) => [h.name, (h.report?.hostname ?? "").split(".")[0].toLowerCase()]).filter(Boolean));
-  const onWatch = (c) => { window.location.hash = ""; window.dispatchEvent(new CustomEvent("argus-watch", { detail: c })); };
   const selected = route.name && hosts.find((h) => h.name === route.name);
   if (selected) {
     return (
       <section className="hosts-page">
         <HostDetail host={selected} tab={route.tab} session={session} reload={reload} refs={refs}
                     backups={backups.filter((b) => b.server !== selected.name)} hostNames={hostNames}
-                    suggestions={(start?.suggestions ?? []).filter((g) => g.host === selected.name)} onWatch={onWatch} />
+                    suggestions={(start?.suggestions ?? []).filter((g) => g.host === selected.name)} />
       </section>
     );
   }
