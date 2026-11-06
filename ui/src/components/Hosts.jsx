@@ -130,22 +130,38 @@ function AddHost({ session, hosts, tlsPin, onClose }) {
   );
 }
 
-function Containers({ list }) {
+function Containers({ list, host, session, reload }) {
   const [all, setAll] = useState(false);
-  const sorted = sortContainers(list);
+  const [error, setError] = useState(null);
+  const ignored = host.ignored ?? [];
+  const sorted = sortContainers(list, ignored);
   const shown = all ? sorted : sorted.slice(0, FIRST_CONTAINERS);
+  const toggle = async (name, on) => {
+    try {
+      await send("PUT", `/api/companions/${host.id}/ignored`, { container: name, ignored: on }, session.csrf);
+      reload();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
   if (!list.length) return <p className="muted small">Docker runs, with no containers.</p>;
   return (
     <>
       <ul className="host-list">
         {shown.map((c) => {
-          const tone = containerTrouble(c) ? "down" : c.health === "starting" ? "failing" : "up";
+          const off = ignored.includes(c.name);
+          const tone = off ? "unknown" : containerTrouble(c) ? "down" : c.health === "starting" ? "failing" : "up";
           return (
-            <li key={c.name}>
+            <li key={c.name} className={off ? "muted" : undefined}>
               <span className={`dot dot-${tone}`} />
               <span className="host-item">{c.name}</span>
-              <span className={`st-${tone} host-note`}>{c.health || c.state}</span>
+              <span className={`st-${tone} host-note`}>{off ? `ignored, ${c.health || c.state}` : c.health || c.state}</span>
               <span className="muted host-sub mono">{c.image}</span>
+              {session?.signed_in && (off || containerTrouble(c)) && (
+                <button className="link-button small" onClick={() => toggle(c.name, !off)}>
+                  {off ? "Stop ignoring" : "Ignore"}
+                </button>
+              )}
             </li>
           );
         })}
@@ -155,6 +171,7 @@ function Containers({ list }) {
           {all ? "Show fewer" : `Show all ${sorted.length}`}
         </button>
       )}
+      {error && <p className="form-error" role="alert">{error}</p>}
     </>
   );
 }
@@ -511,7 +528,7 @@ function Host({ host, session, onRemoved, suggestions, onWatch, refs, backups, h
       {host.stacks?.length > 0 && (
         <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
       )}
-      {r?.containers?.length > 0 && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} /></section>}
+      {r?.containers?.length > 0 && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} host={host} session={session} reload={onRemoved} /></section>}
       {r?.proxmox ? <Guests px={r.proxmox} hostNames={hostNames} />
         : r && !r.containers?.length && /-pve$/.test(r.kernel || "") && (
         <p className="muted small">

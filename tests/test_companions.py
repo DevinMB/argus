@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi.testclient import TestClient
 from test_auth import sign_up
 
+from argus import backup
 from argus.alerts import Alerter
 from argus.app import create_app
 from argus.companions import CODE_TTL, DOMAIN, QUIET_AFTER, name_from
@@ -208,3 +209,25 @@ def test_host_names_become_companion_names():
     assert name_from("NAS01.home.lan") == "nas01"
     assert name_from("my_box") == "my-box"
     assert name_from("___") == "host"
+
+
+def test_a_container_the_owner_does_not_care_about_can_be_ignored(client, csrf, rt, tmp_path):
+    me = enroll(client, new_code(client, csrf)["code"]).json()
+    url = f"/api/companions/{me['id']}/ignored"
+    h = {"X-CSRF-Token": csrf}
+    assert client.put(url, headers=h, json={"container": "smoke", "ignored": True}).json() == {
+        "ignored": ["smoke"]}
+    assert client.get("/api/companions").json()["companions"][0]["ignored"] == ["smoke"]
+    assert client.put("/api/companions/nope/ignored", headers=h,
+                      json={"container": "x", "ignored": True}).status_code == 404
+    client.put(url, headers=h, json={"container": "old", "ignored": True})
+    assert client.put(url, headers=h, json={"container": "old", "ignored": False}).json() == {
+        "ignored": ["smoke"]}
+    # It stays through a rename and an export.
+    assert client.put(f"/api/companions/{me['id']}/name", headers=h,
+                      json={"name": "vm"}).status_code == 200
+    settings = Settings(rt.store.db, load_key(tmp_path / "argus.key"))
+    blob = backup.export(settings, tmp_path, "a long passphrase")
+    rt.store.db.execute("UPDATE companions SET ignored = '[]'")
+    backup.restore(settings, tmp_path, blob, "a long passphrase")
+    assert client.get("/api/companions").json()["companions"][0]["ignored"] == ["smoke"]

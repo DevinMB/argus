@@ -49,6 +49,8 @@ On **Hosts**, press **Add a host**, copy the command and run it on the host. It 
 
 Tick **Monitoring only** if this host should report but never deploy or patch.
 
+A container you do not care about (a one-off job that exited, say) can be set aside with **Ignore** next to it on the host card: it moves to the bottom and no longer counts as trouble. Stopped containers never page either way.
+
 A host is named after its hostname. When that name is no good (two Proxmox servers both called `pve`, a VM that calls itself `localhost`), use **Rename…** on its card. Its patch schedule and history come along, and nothing changes on the host. Deploys follow the new name: Argus sends it the stacks listed in `hosts/<new name>`.
 
 ### Remove a companion

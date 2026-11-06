@@ -47,8 +47,9 @@ def export(settings: Settings, data_dir: Path, passphrase: str) -> bytes:
         "settings": {k: json.loads(v) for k, v in db.execute("SELECT key, value FROM settings")
                      if k not in SKIP and not k.startswith(("patch.request.", "adopt.request."))},
         "secrets": {k: settings.secret(k) for (k,) in db.execute("SELECT key FROM secrets")},
-        "companions": [dict(zip(COMPANION_COLS, row, strict=True)) for row in db.execute(
-            f"SELECT {', '.join(COMPANION_COLS)} FROM companions")],
+        "companions": [dict(zip((*COMPANION_COLS, "ignored"), row, strict=True))
+                       for row in db.execute(
+                           f"SELECT {', '.join(COMPANION_COLS)}, ignored FROM companions")],
         "pauses": [dict(r) for r in db.execute("SELECT * FROM pauses")],
         "tls": {name: (data_dir / name).read_text() for name in ("tls.crt", "tls.key")
                 if (data_dir / name).is_file()},
@@ -89,6 +90,9 @@ def restore(settings: Settings, data_dir: Path, blob: bytes, passphrase: str) ->
             db.execute(f"INSERT INTO companions ({', '.join(COMPANION_COLS)}) VALUES "
                        f"({', '.join('?' * len(COMPANION_COLS))})",
                        tuple(c[k] for k in COMPANION_COLS))
+            if "ignored" in c:  # older exports have none
+                db.execute("UPDATE companions SET ignored = ? WHERE id = ?",
+                           (c["ignored"], c["id"]))
         # Older exports have none.
         if "pauses" in plain:
             db.execute("DELETE FROM pauses")

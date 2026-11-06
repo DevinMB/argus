@@ -271,6 +271,13 @@ describe("hosts", () => {
     const list = [{ name: "b", state: "running" }, { name: "a", state: "running", health: "unhealthy" },
                   { name: "c", state: "exited" }];
     expect(sortContainers(list).map((c) => c.name)).toEqual(["a", "c", "b"]);
+    expect(sortContainers(list, ["c"]).map((c) => c.name)).toEqual(["a", "b", "c"]);
+  });
+
+  it("does not count an ignored container as trouble", () => {
+    const report = { containers: [{ name: "app", state: "running" }, { name: "smoke", state: "exited" }] };
+    expect(hostSentence({ status: "ok", report })).toBe("2 containers, 1 not running well.");
+    expect(hostSentence({ status: "ok", report, ignored: ["smoke"] })).toBe("2 containers, all running.");
   });
 
   it("sums a host up in one sentence", () => {
