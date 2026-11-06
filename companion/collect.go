@@ -45,6 +45,7 @@ type Report struct {
 	PolicyRoots    []string       `json:"policy_roots,omitempty"` // folders deploys may use
 	Collected      []Collected    `json:"collected,omitempty"`
 	Proxmox        *Proxmox       `json:"proxmox,omitempty"` // on a Proxmox server
+	GuestInstalls  []GuestResult  `json:"guest_installs,omitempty"`
 }
 
 type Container struct {

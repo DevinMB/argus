@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
-import { agoText, backupLabel, bytes, containerTrouble, diskTone, hostSentence, sortContainers } from "../lib.js";
+import { agoText, backupLabel, bytes, containerTrouble, diskTone, guestHostName, hostSentence, sortContainers } from "../lib.js";
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
@@ -425,33 +425,67 @@ function Patching({ host, session, refs, backups, reload }) {
 }
 
 // A Proxmox server's guests: which have a backup, and which have Argus on them.
-function Guests({ px, hostNames }) {
+const INSTALL_NOTE = { waiting: "adding Argus…", running: "adding Argus…", ok: "Argus added", failed: "could not add Argus" };
+
+function Guests({ px, hostNames, host, session, reload }) {
+  const [error, setError] = useState(null);
   const now = Date.now() / 1000;
-  const without = px.guests.filter((g) => !hostNames.has(g.name.toLowerCase()));
+  const installs = host.guest_installs ?? {};
+  const has = (g) => hostNames.has(guestHostName(g.name));
+  const without = px.guests.filter((g) => !has(g));
+  const canAdd = (g) => session?.signed_in && !host.read_only && g.status === "running" && !has(g)
+    && !["waiting", "running", "ok"].includes(installs[g.vmid]?.state);
+  const addable = px.guests.filter(canAdd);
+  const add = async (list) => {
+    setError(null);
+    for (const g of list) {
+      try {
+        await send("POST", `/api/companions/${host.id}/guests/${g.vmid}/install`,
+          { url: window.location.origin }, session.csrf);
+      } catch (e) {
+        setError(`${g.name || g.vmid}: ${e.message}`);
+      }
+    }
+    reload();
+  };
   return (
     <section>
       <h4 className="eyebrow">guests</h4>
       <p className="muted small section-why">
-        Your apps run in these VMs and containers. Add Argus to each one (Add a host, run on the
-        guest) to see its containers, watch it and patch it; the backup shown here is its safety
-        net, linked for you.{without.length > 0 && ` ${without.length} of ${px.guests.length} without Argus yet.`}
+        Your apps run in these VMs and containers. Add Argus to each one to see its containers, watch
+        it and patch it; the backup shown here is its safety net, linked for you. <strong>Add Argus</strong> has
+        this server install it in the guest: containers always work, VMs need the QEMU guest agent.
+        {without.length > 0 && ` ${without.length} of ${px.guests.length} without Argus yet.`}
       </p>
+      {addable.length > 1 && (
+        <p><button className="btn" onClick={() => add(addable)}>Add Argus to all {addable.length} running</button></p>
+      )}
       <ul className="host-list">{px.guests.map((g) => {
         const age = g.backup && now - g.backup.at;
         const tone = !g.backup ? "unknown" : age < 8 * 86400 ? "up" : "failing";
+        const inst = installs[g.vmid];
         return (
           <li key={`${g.type}${g.vmid}`}>
             <span className={`dot dot-${tone}`} />
             <span className="host-item">{g.name || "(no name)"} <span className="muted mono">{g.type === "lxc" ? "CT" : "VM"} {g.vmid}</span></span>
-            <span className={`host-note ${hostNames.has(g.name.toLowerCase()) ? "st-up" : "muted"}`}>
-              {hostNames.has(g.name.toLowerCase()) ? "has Argus" : g.status}</span>
+            <span className={`host-note ${has(g) ? "st-up" : inst?.state === "failed" ? "st-failing" : "muted"}`}>
+              {has(g) ? "has Argus" : inst ? INSTALL_NOTE[inst.state] : g.status}</span>
             <span className="muted host-sub">
               {g.backup ? `Backed up ${agoText(age)} to ${g.backup.storage} (${bytes(g.backup.size)})` : "No backup this server can see"}
             </span>
+            {canAdd(g) && (
+              <button className="link-button small" onClick={() => add([g])}>
+                {inst?.state === "failed" ? "Try again" : "Add Argus"}
+              </button>
+            )}
+            {inst?.state === "failed" && inst.output && (
+              <details className="small"><summary>What happened</summary><pre className="mono">{inst.output}</pre></details>
+            )}
           </li>
         );
       })}</ul>
       {px.error && <p className="st-failing small">{px.error}</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
     </section>
   );
 }
@@ -529,7 +563,7 @@ function Host({ host, session, onRemoved, suggestions, onWatch, refs, backups, h
         <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
       )}
       {r?.containers?.length > 0 && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} host={host} session={session} reload={onRemoved} /></section>}
-      {r?.proxmox ? <Guests px={r.proxmox} hostNames={hostNames} />
+      {r?.proxmox ? <Guests px={r.proxmox} hostNames={hostNames} host={host} session={session} reload={onRemoved} />
         : r && !r.containers?.length && /-pve$/.test(r.kernel || "") && (
         <p className="muted small">
           This is a Proxmox server: your apps run in its VMs and containers, not on it. Update Argus

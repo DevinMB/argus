@@ -94,7 +94,7 @@ class Companions:
     # --- enrollment ---
 
     def new_code(self, name: str = "", read_only: bool = False,
-                 uses: int = 1) -> tuple[str, float]:
+                 uses: int = 1, ttl: float | None = None) -> tuple[str, float]:
         """A code for `uses` hosts (one by default). `name` is optional and only for
         one host; empty means each host's own name. A code for several hosts lasts
         an hour, so one command can be run on each guest in turn."""
@@ -102,7 +102,7 @@ class Companions:
             raise ValueError("a code for several hosts names each host after itself")
         uses = max(1, min(uses, MAX_USES))
         now = self.clock()
-        ttl = SEVERAL_TTL if uses > 1 else CODE_TTL
+        ttl = ttl or (SEVERAL_TTL if uses > 1 else CODE_TTL)
         raw = base64.b32encode(secrets.token_bytes(10)).decode().lower()
         code = "-".join(raw[i:i + 4] for i in range(0, 16, 4))
         with self.db:

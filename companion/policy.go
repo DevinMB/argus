@@ -26,6 +26,9 @@ type Policy struct {
 	// True: this program is updated only by re-running the install command, never
 	// by itself when Argus serves a newer build.
 	ManualUpdates bool `json:"manual_updates"`
+	// True: on a Proxmox server, never add the companion to a guest when Argus
+	// asks (Add Argus on a guest row).
+	NoGuestInstalls bool `json:"no_guest_installs"`
 }
 
 func defaultPolicy() *Policy {
