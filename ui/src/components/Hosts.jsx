@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
-import { agoText, bytes, containerTrouble, diskTone, hostSentence, sortContainers } from "../lib.js";
+import { agoText, backupLabel, bytes, containerTrouble, diskTone, hostSentence, sortContainers } from "../lib.js";
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
@@ -237,8 +237,13 @@ function Stacks({ stacks, session, reload }) {
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const RUN_TONE = { ok: "up", failed: "down", running: "accent", granted: "accent", rebooting: "accent" };
 
-function PatchForm({ host, session, refs, onSaved, onCancel }) {
-  const [p, setP] = useState(host.patching.plan);
+function PatchForm({ host, session, refs, backups, onSaved, onCancel }) {
+  const suggested = host.patching.suggested_backup;
+  const [p, setP] = useState(() => {
+    const plan = host.patching.plan;
+    // A guest whose Proxmox backup Argus can see starts with it chosen.
+    return !plan.backup && suggested ? { ...plan, backup: suggested } : plan;
+  });
   const [error, setError] = useState(null);
   const set = (k, v) => setP({ ...p, [k]: v });
   const save = async (e) => {
@@ -284,7 +289,16 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
         <label className="field"><span>Its backup</span>
           <select value={p.backup} onChange={(e) => set("backup", e.target.value)}>
             <option value="">None yet</option>
-            {refs.map((r) => <option key={r} value={r}>{r.replace(":", ": ")}</option>)}
+            {backups.length > 0 && (
+              <optgroup label="Proxmox backups">
+                {backups.map((b) => <option key={b.ref} value={b.ref}>{backupLabel(b)}{b.ref === suggested ? " (this host)" : ""}</option>)}
+              </optgroup>
+            )}
+            {refs.length > 0 && (
+              <optgroup label="Jobs and timers that report to Argus">
+                {refs.map((r) => <option key={r} value={r}>{r.replace(":", ": ")}</option>)}
+              </optgroup>
+            )}
           </select></label>
         <label className="field"><span>Recent means (days)</span>
           <input type="number" min="1" max="366" value={p.backup_days}
@@ -296,10 +310,11 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
           </select></label>
       </div>
       <small className="muted">
-        Argus patches a host only when it can be brought back: its backup (a job or timer that
-        reports to Argus when it finishes) is more recent than the days you set here, or the host
-        has a ZFS root Argus snapshots first. A restore test now and then is how you know the
-        backup works: optional, and encouraged.
+        Argus patches a host only when it can be brought back: its backup is more recent than the
+        days you set here, or the host has a ZFS root Argus snapshots first. On Proxmox, add Argus to
+        the Proxmox server too and each guest's vzdump backup shows up here by itself; otherwise
+        pick a job or timer that reports to Argus when your backup finishes. A restore test now
+        and then is how you know the backup works: optional, and encouraged.
       </small>
       <label className="toggle"><input type="checkbox" checked={p.reboot} onChange={(e) => set("reboot", e.target.checked)} />
         <span>Reboot when an update needs it</span></label>
@@ -313,7 +328,7 @@ function PatchForm({ host, session, refs, onSaved, onCancel }) {
   );
 }
 
-function Patching({ host, session, refs, reload }) {
+function Patching({ host, session, refs, backups, reload }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState(null);
   const pt = host.patching;
@@ -367,9 +382,41 @@ function Patching({ host, session, refs, reload }) {
           )}
         </div>
       )}
-      {editing && <PatchForm host={host} session={session} refs={refs}
+      {editing && <PatchForm host={host} session={session} refs={refs} backups={backups}
                              onSaved={() => { setEditing(false); reload(); }} onCancel={() => setEditing(false)} />}
       {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+// A Proxmox server's guests: which have a backup, and which have Argus on them.
+function Guests({ px, hostNames }) {
+  const now = Date.now() / 1000;
+  const without = px.guests.filter((g) => !hostNames.has(g.name.toLowerCase()));
+  return (
+    <section>
+      <h4 className="eyebrow">guests</h4>
+      <p className="muted small section-why">
+        Your apps run in these VMs and containers. Add Argus to each one (Add a host, run on the
+        guest) to see its containers, watch it and patch it; the backup shown here is its safety
+        net, linked for you.{without.length > 0 && ` ${without.length} of ${px.guests.length} without Argus yet.`}
+      </p>
+      <ul className="host-list">{px.guests.map((g) => {
+        const age = g.backup && now - g.backup.at;
+        const tone = !g.backup ? "unknown" : age < 8 * 86400 ? "up" : "failing";
+        return (
+          <li key={`${g.type}${g.vmid}`}>
+            <span className={`dot dot-${tone}`} />
+            <span className="host-item">{g.name || "(no name)"} <span className="muted mono">{g.type === "lxc" ? "CT" : "VM"} {g.vmid}</span></span>
+            <span className={`host-note ${hostNames.has(g.name.toLowerCase()) ? "st-up" : "muted"}`}>
+              {hostNames.has(g.name.toLowerCase()) ? "has Argus" : g.status}</span>
+            <span className="muted host-sub">
+              {g.backup ? `Backed up ${agoText(age)} to ${g.backup.storage} (${bytes(g.backup.size)})` : "No backup this server can see"}
+            </span>
+          </li>
+        );
+      })}</ul>
+      {px.error && <p className="st-failing small">{px.error}</p>}
     </section>
   );
 }
@@ -404,7 +451,7 @@ function NotFromGit({ host, session, reload }) {
   );
 }
 
-function Host({ host, session, onRemoved, suggestions, onWatch, refs }) {
+function Host({ host, session, onRemoved, suggestions, onWatch, refs, backups, hostNames }) {
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState(null);
   const r = host.report;
@@ -435,11 +482,11 @@ function Host({ host, session, onRemoved, suggestions, onWatch, refs }) {
         <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
       )}
       {r?.containers?.length > 0 && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} /></section>}
-      {r && !r.containers?.length && /-pve$/.test(r.kernel || "") && (
+      {r?.proxmox ? <Guests px={r.proxmox} hostNames={hostNames} />
+        : r && !r.containers?.length && /-pve$/.test(r.kernel || "") && (
         <p className="muted small">
-          This is a Proxmox server: your apps run in its VMs and containers, not on it. Argus watches
-          its disks, updates and services here. To see an app's containers, add Argus to the guest that
-          runs it. Patched by your own Proxmox tooling? Say so under patching.
+          This is a Proxmox server: your apps run in its VMs and containers, not on it. Update Argus
+          on this server (run Add a host again) to see its guests and their backups here.
         </p>
       )}
       <NotFromGit host={host} session={session} reload={onRemoved} />
@@ -467,7 +514,7 @@ function Host({ host, session, onRemoved, suggestions, onWatch, refs }) {
           ))}</ul>
         </section>
       )}
-      <Patching host={host} session={session} refs={refs} reload={onRemoved} />
+      <Patching host={host} session={session} refs={refs} backups={backups} reload={onRemoved} />
       {(r?.updates || r?.reboot_required) && (
         <section>
           <h4 className="eyebrow">updates</h4>
@@ -516,6 +563,8 @@ export default function Hosts({ data, session, reload, start, refs = [] }) {
   const [adding, setAdding] = useState(false);
   const hosts = data?.companions ?? [];
   const quiet = hosts.filter((h) => h.status === "quiet").length;
+  const backups = data?.backups ?? [];
+  const hostNames = new Set(hosts.flatMap((h) => [h.name, (h.report?.hostname ?? "").split(".")[0].toLowerCase()]).filter(Boolean));
   return (
     <section className="hosts-page">
       <div className="hosts-head">
@@ -543,6 +592,7 @@ export default function Hosts({ data, session, reload, start, refs = [] }) {
       <div className="hosts">
         {hosts.map((h) => (
           <Host key={h.id} host={h} session={session} onRemoved={reload} refs={refs}
+                backups={backups.filter((b) => b.server !== h.name)} hostNames={hostNames}
                 suggestions={(start?.suggestions ?? []).filter((g) => g.host === h.name)}
                 onWatch={(c) => { window.location.hash = ""; window.dispatchEvent(new CustomEvent("argus-watch", { detail: c })); }} />
         ))}

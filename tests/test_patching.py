@@ -183,3 +183,29 @@ def test_a_removed_hosts_plan_is_not_inherited_by_a_new_host_with_its_name(env):
     assert host["patching"]["plan"]["backup"] == ""
     assert host["patching"]["runs"] == []
     assert c.app.state.alerter.problems() == {}  # the old host's failed run went with it
+
+
+def test_a_proxmox_guest_uses_the_backup_its_server_sees(env):
+    # Nothing to wire: the companion on the Proxmox server reports each guest's
+    # newest vzdump backup, and the guest's own host card offers it.
+    c, csrf, rt, clock = env
+    pve, shop = enroll(c, csrf, "pve1"), enroll(c, csrf, "shop")
+    guests = [{"vmid": 101, "name": "shop", "type": "qemu", "status": "running",
+               "backup": {"at": clock.now - 86400, "storage": "nas", "size": 1}},
+              {"vmid": 102, "name": "never", "type": "lxc", "status": "stopped"}]
+    report(c, pve, local=TUE_0305, proxmox={"node": "pve1", "guests": guests})
+    report(c, shop, local={**TUE_0305, "time": "01:00"}, hostname="shop.lan")
+    body = c.get("/api/companions").json()
+    assert [b["ref"] for b in body["backups"]] == ["pve:pve1/101", "pve:pve1/102"]
+    views = {v["name"]: v["patching"] for v in body["companions"]}
+    assert views["shop"]["suggested_backup"] == "pve:pve1/101"
+    assert views["pve1"]["suggested_backup"] == ""  # a server is not its own guest
+    v = c.put("/api/patching/shop", headers=csrf, json={**PLAN, "backup": "pve:pve1/101"}).json()
+    assert v["safety"]["net"] == "a recent backup"
+    assert "patch" in report(c, shop, local=TUE_0305)
+    # A backup the server stops seeing as recent stops the next window.
+    report(c, shop, local=TUE_0305, patch={"run": 1, "state": "ok"})
+    clock.now += 8 * 86400
+    report(c, pve, local=TUE_0305, proxmox={"node": "pve1", "guests": guests})
+    assert "patch" not in report(c, shop, local={**TUE_0305, "date": "2027-01-19"})
+    assert "9 days old" in c.get("/api/companions").json()["companions"][1]["patching"]["skipped"]

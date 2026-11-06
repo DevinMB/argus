@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -43,6 +44,7 @@ type Report struct {
 	Patch          *PatchState    `json:"patch,omitempty"`
 	PolicyRoots    []string       `json:"policy_roots,omitempty"` // folders deploys may use
 	Collected      []Collected    `json:"collected,omitempty"`
+	Proxmox        *Proxmox       `json:"proxmox,omitempty"` // on a Proxmox server
 }
 
 type Container struct {
@@ -78,10 +80,15 @@ type Collector struct {
 	MountInfo    string
 	OSRelease    string
 	RebootFile   string
+	Proxmox      proxmoxPaths
 	run          func(name string, args ...string) (string, int, error)
 
 	updates     *Updates
 	updatesNext time.Time
+	pveMu       sync.Mutex
+	pve         *Proxmox
+	pveNext     time.Time
+	pveSince    time.Time // when the read in flight started; zero when none is
 }
 
 const updatesEvery = time.Hour
@@ -92,6 +99,7 @@ func newCollector() *Collector {
 		MountInfo:    "/proc/self/mountinfo",
 		OSRelease:    "/etc/os-release",
 		RebootFile:   "/var/run/reboot-required",
+		Proxmox:      defaultProxmoxPaths,
 		run:          runCommand,
 	}
 }
@@ -153,6 +161,9 @@ func (c *Collector) Collect(readOnly bool) *Report {
 	r.Updates = c.updates
 	r.RebootRequired = c.rebootRequired()
 	r.Local = localNow(time.Now())
+	if isProxmox(c.Proxmox) {
+		r.Proxmox = c.proxmox(strings.SplitN(host, ".", 2)[0])
+	}
 	if zfsRoot(c.MountInfo) != "" && has("zfs") {
 		r.Snapshot = "zfs"
 	}
@@ -435,4 +446,29 @@ func (c *Collector) rebootRequired() *bool {
 		return &no // Debian and Ubuntu write the file when they need one
 	}
 	return nil
+}
+
+// proxmox reads guests and backups in the background: a backup storage on a
+// hung NFS mount must not stop the reports. Until a read finishes, the last
+// one is sent, and after a while it says the storage is not answering.
+func (c *Collector) proxmox(node string) *Proxmox {
+	c.pveMu.Lock()
+	defer c.pveMu.Unlock()
+	now := time.Now()
+	if c.pveSince.IsZero() && now.After(c.pveNext) {
+		c.pveSince, c.pveNext = now, now.Add(proxmoxEvery)
+		go func() {
+			got := collectProxmox(c.Proxmox, node)
+			c.pveMu.Lock()
+			c.pve, c.pveSince = got, time.Time{}
+			c.pveMu.Unlock()
+		}()
+	}
+	if c.pve == nil || c.pveSince.IsZero() || now.Sub(c.pveSince) < 10*time.Minute {
+		return c.pve
+	}
+	stale := *c.pve
+	stale.Error = "the backup storage has not answered for " +
+		strconv.Itoa(int(now.Sub(c.pveSince).Minutes())) + " minutes"
+	return &stale
 }
