@@ -513,7 +513,7 @@ export function installHelp(output = "", guest = {}, origin = globalThis.locatio
   if (vm && (o.includes("guest agent") || o.includes("qemu-guest-agent"))) {
     return { title: "The QEMU guest agent is not running in this VM", manual: true,
       lead: "Argus reaches a VM through its guest agent. Add Argus by hand (below), or turn the agent on:", steps: [
-      "In the VM: apt install qemu-guest-agent (or dnf install qemu-guest-agent).",
+      "In the VM, install and start it. Debian, Ubuntu: `sudo apt install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent` Rocky, Fedora: `sudo dnf install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent`",
       "In Proxmox: the VM's Options, QEMU Guest Agent, Enabled.",
       "Shut the VM down and start it again (a reboot from inside is not enough), then Try again."] };
   }

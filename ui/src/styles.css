@@ -797,3 +797,6 @@ details.about p { margin: 6px 0 0; }
 .install-help ol li { display: list-item; border: 0; padding: 0; }
 a.btn { text-decoration: none; display: inline-block; }
 .install-help .install-lead { margin: 0; display: block; }
+.help-cmd { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.help-cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 5px 8px; color: var(--text); }
+.help-cmd .btn { padding: 3px 10px; font-size: 12px; }
