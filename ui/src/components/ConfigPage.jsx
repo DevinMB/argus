@@ -112,7 +112,8 @@ export default function ConfigPage({ session }) {
     const v = await send("GET", "/api/config");
     setView(v);
     setText(v.text);
-    setGit({ repo: v.repo, path: v.path, branch: v.branch, mode: v.mode });
+    // Keep what was typed when the config is not in git yet, so a refused move can be fixed.
+    if (v.source === "github") setGit({ repo: v.repo, path: v.path, branch: v.branch, mode: v.mode });
   }, []);
   useEffect(() => {
     load().catch((e) => setError(e.message));

@@ -769,6 +769,11 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             try:
                 got = await edit_call(src._fetch)()
                 if got is None:  # not in the repo yet: put the current config there
+                    if not s.secret(configsrc.WRITE_TOKEN):
+                        # Most often a wrong path: say so, not "get a token".
+                        raise HTTPException(409, f"there is no {body.path} in {body.repo}; check "
+                                            "the path, or save the write token (GitHub page, "
+                                            "Deploys) to start one there")
                     src.sha = None
                     await edit_call(src._commit)(current or configsrc.STARTER,
                                                  "start Argus's config here")
