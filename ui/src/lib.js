@@ -499,3 +499,41 @@ export function hostSub(host, guest) {
   const os = r.proxmox ? "Proxmox VE" : (r.os || "").replace(/ GNU\/Linux/, "").replace(/\s*\(.*\)$/, "");
   return [guest && `${guest.type === "lxc" ? "CT" : "VM"} ${guest.vmid}`, os, host?.address].filter(Boolean).join(" · ");
 }
+
+// Why adding Argus to a guest failed, in plain words, and what to do next.
+// `manual` says whether running Add a host in the guest is the way out.
+export function installHelp(output = "", guest = {}, origin = globalThis.location?.origin ?? "Argus") {
+  const o = output.toLowerCase();
+  const vm = guest.type === "qemu";
+  if (o.includes("install: not found") || o.includes("home assistant os")) {
+    return { title: "This guest is an appliance", manual: false, steps: [
+      "Appliances such as Home Assistant OS have no standard tools and update themselves, so they cannot run a companion.",
+      "Press Skip: it stops counting, and Add Argus to all leaves it out."] };
+  }
+  if (vm && (o.includes("guest agent") || o.includes("qemu-guest-agent"))) {
+    return { title: "The QEMU guest agent is not running in this VM", manual: true,
+      lead: "Argus reaches a VM through its guest agent. Add Argus by hand (below), or turn the agent on:", steps: [
+      "In the VM: apt install qemu-guest-agent (or dnf install qemu-guest-agent).",
+      "In Proxmox: the VM's Options, QEMU Guest Agent, Enabled.",
+      "Shut the VM down and start it again (a reboot from inside is not enough), then Try again."] };
+  }
+  if (o.includes("not running") && !o.includes("agent")) {
+    return { title: "The guest is not running", manual: false, steps: ["Start it in Proxmox, then Try again; or Skip it if it stays off."] };
+  }
+  if (/curl: \((6|7|28)\)/.test(o) || o.includes("could not resolve") || o.includes("timed out") || o.includes("connection refused")) {
+    return { title: "The guest could not reach Argus", manual: true, steps: [
+      `It tried ${origin}. Check the guest's network (gateway, DNS) and any firewall between it and Argus, then Try again.`] };
+  }
+  if (o.includes("pinnedpubkey") || o.includes("curl: (90)") || o.includes("curl: (60)")) {
+    return { title: "Argus's certificate did not match", manual: false, steps: [
+      "Something between the guest and Argus answered with another certificate (a proxy?). Make sure the guest reaches Argus directly, then Try again."] };
+  }
+  if (o.includes("code") && (o.includes("expired") || o.includes("used") || o.includes("401") || o.includes("403"))) {
+    return { title: "The one-time code ran out", manual: false, steps: ["Press Try again: it makes a new code."] };
+  }
+  if (o.includes("never answered")) {
+    return { title: "The Proxmox server never picked it up", manual: true, steps: [
+      "The server's companion may be out of date or not reporting. Check the server's row, then Try again."] };
+  }
+  return { title: "Adding Argus failed", manual: true, steps: ["The output below says what went wrong. Try again, or add Argus by hand."] };
+}

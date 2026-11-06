@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
-import { agoText, attention, backupLabel, bytes, containerTrouble, diskTone, guestHostName, hostSentence, hostSub, hostTree, patchLabel, sortContainers } from "../lib.js";
+import { agoText, attention, backupLabel, bytes, containerTrouble, diskTone, guestHostName, hostSentence, hostSub, hostTree, installHelp, patchLabel, sortContainers } from "../lib.js";
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
@@ -17,9 +17,9 @@ function Copy({ text }) {
 }
 
 // "Add a host": one command with a code for one host or several, then wait for them to appear.
-function AddHost({ session, hosts, tlsPin, onClose }) {
+function AddHost({ session, hosts, tlsPin, onClose, initialName = "" }) {
   const [url, setUrl] = useState(window.location.origin);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
   const [readOnly, setReadOnly] = useState(false);
   const [count, setCount] = useState(1);
   const [made, setMade] = useState(null);
@@ -517,9 +517,29 @@ function HostRow({ host, guest, child, toggle }) {
   );
 }
 
+// Why adding Argus to a guest failed, what to do next, and the raw output.
+function InstallHelp({ guest, install }) {
+  const help = installHelp(install.output, guest);
+  return (
+    <div className="install-help">
+      <strong>{help.title}</strong>
+      {help.lead && <p className="install-lead muted">{help.lead}</p>}
+      <ol>{help.steps.map((s) => <li key={s}>{s}</li>)}</ol>
+      {help.manual && (
+        <p><a className="btn btn-small" href={`#/hosts?add=${encodeURIComponent(guestHostName(guest.name || `guest-${guest.vmid}`))}`}>
+          Add it by hand instead</a> <span className="muted small">Run Add a host's command in the guest; it joins under this name.</span></p>
+      )}
+      {install.output && <details><summary className="small muted">What it printed</summary><pre className="log">{install.output}</pre></details>}
+    </div>
+  );
+}
+
 function GuestRow({ guest, install, canAdd, onAdd, skipped, onSkip }) {
   const fine = backupTone(guest) === "up";
+  const [why, setWhy] = useState(false);
+  const failed = install?.state === "failed" && !skipped;
   return (
+    <>
     <div className="fleet-row fleet-child fleet-bare">
       <span className="fleet-name">
         <span className="dot dot-hollow" title="no Argus" />
@@ -534,12 +554,15 @@ function GuestRow({ guest, install, canAdd, onAdd, skipped, onSkip }) {
         </>}
       </span>
       <span className="fleet-act">
+        {failed && <button className="btn btn-small" aria-expanded={why} onClick={() => setWhy(!why)}>{why ? "Hide" : "Why?"}</button>}
         {canAdd && !skipped && <button className="btn btn-small" onClick={() => onAdd([guest])}>{install?.state === "failed" ? "Try again" : "Add Argus"}</button>}
         {onSkip && <button className="btn btn-small btn-ghost" onClick={() => onSkip(guest, !skipped)}
                            title={skipped ? "Count it again" : "It cannot or should not run Argus (an appliance, a switched-off guest)"}>
           {skipped ? "Unskip" : "Skip"}</button>}
       </span>
     </div>
+    {failed && why && <div className="fleet-child fleet-help"><InstallHelp guest={guest} install={install} /></div>}
+    </>
   );
 }
 
@@ -646,8 +669,8 @@ function Guests({ host, hostNames, session, reload }) {
                   {gi.skipped.has(g.vmid) ? "Unskip" : "Skip"}</button>
               )}
             </span>
-            {inst?.state === "failed" && inst.output && (
-              <details className="row-wide small"><summary>What happened</summary><pre className="log">{inst.output}</pre></details>
+            {inst?.state === "failed" && !gi.skipped.has(g.vmid) && (
+              <div className="row-wide"><InstallHelp guest={g} install={inst} /></div>
             )}
           </li>
         );
@@ -848,7 +871,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
 function useHostRoute() {
   const read = () => {
     const q = new URLSearchParams((window.location.hash.split("?")[1]) ?? "");
-    return { name: q.get("host"), tab: q.get("tab") };
+    return { name: q.get("host"), tab: q.get("tab"), add: q.get("add") };
   };
   const [route, setRoute] = useState(read);
   useEffect(() => {
@@ -862,6 +885,8 @@ function useHostRoute() {
 export default function Hosts({ data, session, reload, start, refs = [] }) {
   const [adding, setAdding] = useState(false);
   const route = useHostRoute();
+  // #/hosts?add=<name>: "Add it by hand instead" on a guest Argus could not reach.
+  useEffect(() => { if (route.add) setAdding(true); }, [route.add]);
   const hosts = data?.companions ?? [];
   const quiet = hosts.filter((h) => h.status === "quiet").length;
   const backups = data?.backups ?? [];
@@ -893,8 +918,8 @@ export default function Hosts({ data, session, reload, start, refs = [] }) {
       </div>
       {route.name && <p className="banner banner-warn">There is no host called {route.name} any more. <a href="#/hosts">All hosts</a></p>}
       {adding && session?.signed_in && (
-        <AddHost session={session} hosts={hosts} tlsPin={data?.tls_pin}
-                 onClose={() => { setAdding(false); reload(); }} />
+        <AddHost key={route.add || ""} session={session} hosts={hosts} tlsPin={data?.tls_pin} initialName={route.add || ""}
+                 onClose={() => { setAdding(false); if (route.add) window.location.hash = "/hosts"; reload(); }} />
       )}
       {data?.unknown?.length > 0 && (
         <p className="banner banner-warn">

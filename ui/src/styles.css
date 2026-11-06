@@ -786,3 +786,14 @@ details.about p { margin: 6px 0 0; }
   .fleet-fold .fleet-name { grid-column: 1 / -1; }
   .hd-seen { margin-left: 0; flex-basis: 100%; }
 }
+
+.fleet-help { padding: 4px 16px 14px 70px; }
+.install-help { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid rgb(255 107 94 / 0.35); border-radius: 8px;
+  background: rgb(255 107 94 / 0.05); font-size: 13px; }
+.install-help ol { margin: 0; padding-left: 18px; display: grid; gap: 3px; color: var(--muted); }
+.install-help p { margin: 4px 0 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.install-help details pre { margin: 6px 0 0; }
+@media (max-width: 760px) { .fleet-help { padding: 4px 12px 12px; } }
+.install-help ol li { display: list-item; border: 0; padding: 0; }
+a.btn { text-decoration: none; display: inline-block; }
+.install-help .install-lead { margin: 0; display: block; }
