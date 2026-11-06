@@ -716,6 +716,11 @@ textarea.yaml {
   border-left: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); border-bottom-left-radius: 4px;
 }
 .fleet-row:not(.fleet-headrow):hover { background: var(--raise); }
+.fleet-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.fleet-patch { display: grid; gap: 2px; }
+.btn-ghost { background: none; border-color: transparent; color: var(--muted); }
+.btn-ghost:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.row-act { display: flex; gap: 6px; }
 .fleet-name { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .fleet-title { display: grid; min-width: 0; text-decoration: none; color: inherit; }
 .fleet-title > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

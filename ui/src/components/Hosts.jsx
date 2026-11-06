@@ -463,7 +463,17 @@ function useGuestInstall(server, session, reload) {
     }
     reload();
   };
-  return { installs, canAdd, add, error };
+  const skipped = new Set((server.ignored ?? []).filter((x) => x.startsWith("guest:")).map((x) => Number(x.slice(6))));
+  const skip = async (g, on) => {
+    setError(null);
+    try {
+      await send("PUT", `/api/companions/${server.id}/ignored`, { container: `guest:${g.vmid}`, ignored: on }, session.csrf);
+    } catch (e) {
+      setError(`${g.name || g.vmid}: ${e.message}`);
+    }
+    reload();
+  };
+  return { installs, canAdd: (g, has) => canAdd(g, has) && !skipped.has(g.vmid), add, error, skipped, skip };
 }
 
 function backupText(g, now = Date.now() / 1000) {
@@ -495,16 +505,20 @@ function HostRow({ host, guest, child, toggle }) {
         <a className="fleet-title" href={`#/hosts?host=${encodeURIComponent(host.name)}`}>
           <strong>{host.name}</strong><span className="muted small">{hostSub(host, guest)}</span></a>
       </span>
-      <span className="fleet-tags"><Tags items={attention(host)} />
-        {guest && <span className={`tag tag-${backupTone(guest) === "up" ? "quiet" : "failing"}`}>{backupText(guest)}</span>}</span>
-      <span className={`fleet-patch small st-${ptone}`}>{ptext}</span>
+      <span className="fleet-tags">
+        <Tags items={[...attention(host), ...(guest && backupTone(guest) !== "up" ? [["failing", backupText(guest)]] : [])]} /></span>
+      <span className="fleet-patch small">
+        <span className={`st-${ptone}`}>{ptext}</span>
+        {guest?.backup && backupTone(guest) === "up" && <span className="muted">backup {agoText(Date.now() / 1000 - guest.backup.at)}</span>}
+      </span>
       <span className="fleet-seen small muted">{host.last_seen ? agoText(host.age) : "waiting"}</span>
       <a className="fleet-go" href={`#/hosts?host=${encodeURIComponent(host.name)}`} aria-label={`Open ${host.name}`}>›</a>
     </div>
   );
 }
 
-function GuestRow({ guest, install, canAdd, onAdd }) {
+function GuestRow({ guest, install, canAdd, onAdd, skipped, onSkip }) {
+  const fine = backupTone(guest) === "up";
   return (
     <div className="fleet-row fleet-child fleet-bare">
       <span className="fleet-name">
@@ -513,11 +527,17 @@ function GuestRow({ guest, install, canAdd, onAdd }) {
           <span className="muted small">{guest.type === "lxc" ? "CT" : "VM"} {guest.vmid} · {guest.status}</span></span>
       </span>
       <span className="fleet-tags">
-        <span className={`tag tag-${backupTone(guest) === "up" ? "quiet" : "failing"}`}>{backupText(guest)}</span>
-        {install && <span className={`tag tag-${install.state === "failed" ? "down" : "unknown"}`}>{INSTALL_NOTE[install.state]}</span>}
+        {skipped ? <span className="muted small">skipped</span> : <>
+          {install && <span className={`tag tag-${install.state === "failed" ? "down" : "unknown"}`}>{INSTALL_NOTE[install.state]}</span>}
+          {fine ? <span className="muted small">backup {agoText(Date.now() / 1000 - guest.backup.at)}</span>
+            : <span className="tag tag-failing">{backupText(guest)}</span>}
+        </>}
       </span>
       <span className="fleet-act">
-        {canAdd && <button className="btn btn-small" onClick={() => onAdd([guest])}>{install?.state === "failed" ? "Try again" : "Add Argus"}</button>}
+        {canAdd && !skipped && <button className="btn btn-small" onClick={() => onAdd([guest])}>{install?.state === "failed" ? "Try again" : "Add Argus"}</button>}
+        {onSkip && <button className="btn btn-small btn-ghost" onClick={() => onSkip(guest, !skipped)}
+                           title={skipped ? "Count it again" : "It cannot or should not run Argus (an appliance, a switched-off guest)"}>
+          {skipped ? "Unskip" : "Skip"}</button>}
       </span>
     </div>
   );
@@ -540,21 +560,24 @@ function ServerGroup({ row, session, reload }) {
   const [bareOpen, setBareOpen] = useState(false);
   const flip = () => { remember(`argus.fold.${host.name}`, !open); setOpen(!open); };
   const withArgus = guests.filter((g) => g.host);
-  const bare = guests.filter((g) => !g.host);
+  const bare = guests.filter((g) => !g.host && !gi.skipped.has(g.guest.vmid));
+  const skippedRows = guests.filter((g) => !g.host && gi.skipped.has(g.guest.vmid));
   const addable = bare.filter((g) => gi.canAdd(g.guest, false)).map((g) => g.guest);
   const busy = bare.filter((g) => ["waiting", "running", "failed"].includes(gi.installs[g.guest.vmid]?.state));
   // Guests being added, or that failed, stay in sight.
-  const shown = bareOpen ? bare : busy;
+  const shown = bareOpen ? [...bare, ...skippedRows] : busy;
   return (
     <div className="fleet-group">
       <HostRow host={host} toggle={{ open, flip }} />
       {open && <>
         {withArgus.map((g) => <HostRow key={g.host.id} host={g.host} guest={g.guest} child />)}
-        {bare.length > 0 && (
+        {bare.length + skippedRows.length > 0 && (
           <div className="fleet-row fleet-child fleet-fold">
             <span className="fleet-name">
               <span className="dot dot-hollow" />
-              <span className="muted small">{bare.length} guest{bare.length === 1 ? "" : "s"} without Argus</span>
+              <span className="muted small">
+                {bare.length ? `${bare.length} guest${bare.length === 1 ? "" : "s"} without Argus` : "Every guest has Argus"}
+                {skippedRows.length > 0 && `, ${skippedRows.length} skipped`}</span>
             </span>
             <span className="fleet-act">
               {addable.length > 0 && session?.signed_in && (
@@ -567,7 +590,8 @@ function ServerGroup({ row, session, reload }) {
         )}
         {shown.map((g) => (
           <GuestRow key={g.guest.vmid} guest={g.guest} install={gi.installs[g.guest.vmid]}
-                    canAdd={gi.canAdd(g.guest, false)} onAdd={gi.add} />
+                    canAdd={gi.canAdd(g.guest, false)} onAdd={gi.add} skipped={gi.skipped.has(g.guest.vmid)}
+                    onSkip={session?.signed_in && !host.read_only ? gi.skip : null} />
         ))}
       </>}
       {gi.error && <p className="form-error fleet-error" role="alert">{gi.error}</p>}
@@ -614,9 +638,13 @@ function Guests({ host, hostNames, session, reload }) {
               <span className="row-sub muted">{g.status} · {g.backup ? `backed up ${agoText(Date.now() / 1000 - g.backup.at)} to ${g.backup.storage} (${bytes(g.backup.size)})` : "no backup this server can see"}</span>
             </span>
             <span className={`row-note ${argus ? "st-up" : inst?.state === "failed" ? "st-failing" : "muted"}`}>
-              {argus ? "has Argus" : inst ? INSTALL_NOTE[inst.state] : ""}</span>
+              {argus ? "has Argus" : gi.skipped.has(g.vmid) ? "skipped" : inst ? INSTALL_NOTE[inst.state] : ""}</span>
             <span className="row-act">
               {gi.canAdd(g, argus) && <button className="btn btn-small" onClick={() => gi.add([g])}>{inst?.state === "failed" ? "Try again" : "Add Argus"}</button>}
+              {!argus && session?.signed_in && !host.read_only && (
+                <button className="btn btn-small btn-ghost" onClick={() => gi.skip(g, !gi.skipped.has(g.vmid))}>
+                  {gi.skipped.has(g.vmid) ? "Unskip" : "Skip"}</button>
+              )}
             </span>
             {inst?.state === "failed" && inst.output && (
               <details className="row-wide small"><summary>What happened</summary><pre className="log">{inst.output}</pre></details>
