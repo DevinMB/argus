@@ -53,6 +53,7 @@ from argus.patching import REQUEST, Patching
 from argus.probes import Result
 from argus.runtime import Runtime
 from argus.settings import Settings, load_key
+from argus.sniff import Sniffer
 
 STALL = 30  # seconds without a scheduler tick before /healthz fails
 MAX_REPORT = 256 * 1024  # bytes in a job report
@@ -496,6 +497,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         app.state.patching = alerter.patching = Patching(rt.store.db, settings, rt, rt.clock)
         app.state.adoption = Adoption(settings, deploys, rt.clock)
         app.state.guests = GuestInstalls(rt.clock)
+        app.state.sniffer = Sniffer(rt.clock)
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
         tasks = []
         if start_scheduler:
@@ -955,7 +957,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                           deploy_views=st.deploys.views(companions), companions=companions,
                           hidden=st.settings.get(start.HIDDEN, False),
                           patched=sum(1 for c in companions if st.patching.counts(c["name"])),
-                          exported_at=st.settings.get(backup.TAKEN))
+                          exported_at=st.settings.get(backup.TAKEN), sniffer=st.sniffer)
 
     @app.put("/api/start")
     async def hide_start(body: StartHidden, request: Request, _: Admin) -> dict:
