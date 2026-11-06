@@ -289,3 +289,22 @@ def test_a_restarted_proxmox_companion_keeps_its_guests_until_it_reads_them(clie
     assert host["report"]["proxmox"]["guests"][0]["name"] == "homepage"
     report(client, pve["token"], kernel="6.8.0-generic")  # not a Proxmox server any more
     assert client.get("/api/companions").json()["companions"][0]["report"]["proxmox"] is None
+
+
+def test_an_appliance_guest_says_to_skip_it(client, csrf):
+    h = {"X-CSRF-Token": csrf}
+    pve = enroll(client, new_code(client, csrf)["code"], "pve").json()
+    px = {"node": "pve", "guests": [{"vmid": 101, "name": "haos15.0", "type": "qemu",
+                                      "status": "running"}]}
+    report(client, pve["token"], proxmox=px)
+    client.post(f"/api/companions/{pve['id']}/guests/101/install", headers=h,
+                json={"url": "https://192.168.10.18:8443"})
+    [todo] = report(client, pve["token"], proxmox=px)[0].json()["guest_installs"]
+    report(client, pve["token"], proxmox=px, guest_installs=[
+        {"vmid": 101, "code": todo["code"], "ok": False, "output": "sh: install: not found"}])
+    host = client.get("/api/companions").json()["companions"][0]
+    assert "Home Assistant OS" in host["guest_installs"]["101"]["output"]
+    # Skip is kept with the server, beside its ignored containers.
+    r = client.put(f"/api/companions/{pve['id']}/ignored", headers=h,
+                   json={"container": "guest:101", "ignored": True})
+    assert r.json() == {"ignored": ["guest:101"]}
