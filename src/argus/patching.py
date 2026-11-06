@@ -7,7 +7,10 @@ signed reply. Argus decides, so the rules hold whatever a host thinks:
 
 - no safety net, no patching: the host needs a backup that reports to Argus
   and is newer than the owner's limit for it (default 8 days), or a ZFS root
-  it snapshots just before. A stale backup skips the window and pages;
+  it snapshots just before. A stale backup skips the window and pages. A
+  guest on Proxmox needs nothing wired: the companion on its Proxmox server
+  reports each guest's newest vzdump backup (pve:<server>/<vmid>), and Argus
+  suggests the one whose guest has the host's name;
 - one host at a time, across all hosts;
 - not on a monitoring-only host.
 
@@ -95,7 +98,36 @@ class Patching:
             for h in self.rt.heartbeat_views():
                 if h["name"] == name and h["last_seen"]:
                     return now - h["last_seen"]
+        elif kind == "pve":
+            server, _, vmid = name.partition("/")
+            px = (self.rt.companions.report_of(server) or {}).get("proxmox") or {}
+            for g in px.get("guests") or []:
+                if str(g["vmid"]) == vmid and g.get("backup"):
+                    return now - g["backup"]["at"]
         return None
+
+    def pve_backups(self, views: list[dict]) -> list[dict]:
+        """Every guest the Proxmox servers report, with its newest backup, as refs
+        a plan can name."""
+        out = []
+        for c in views:
+            px = (c["report"] or {}).get("proxmox") or {}
+            for g in px.get("guests") or []:
+                b = g.get("backup") or {}
+                out.append({"ref": f"pve:{c['name']}/{g['vmid']}", "server": c["name"],
+                            "vmid": g["vmid"], "name": g["name"], "type": g["type"],
+                            "status": g["status"], "at": b.get("at"),
+                            "storage": b.get("storage", "")})
+        return out
+
+    @staticmethod
+    def suggest(host: str, report: dict | None, backups: list[dict]) -> str:
+        """The backup of the Proxmox guest this host is: the one with its name."""
+        names = {host.lower(), ((report or {}).get("hostname") or "").split(".")[0].lower()}
+        for b in backups:
+            if b["server"] != host and b["name"] and b["name"].lower() in names:
+                return b["ref"]
+        return ""
 
     def safety(self, host: str, report: dict | None) -> dict:
         """The host's safety net and what it allows."""
@@ -229,11 +261,12 @@ class Patching:
         p = self.plan(host)
         return bool(p["enabled"] or p["elsewhere"])
 
-    def view(self, host: str, report: dict | None) -> dict:
+    def view(self, host: str, report: dict | None, backups: list[dict] | None = None) -> dict:
         p = self.plan(host)
         safety = self.safety(host, report)
         runs = self.runs(host)
         return {"plan": p, "safety": safety, "runs": runs, "elsewhere": self.elsewhere(p),
+                "suggested_backup": self.suggest(host, report, backups or []),
                 "skipped": self.skipped.get(host), "requested": bool(
                     self.settings.get(REQUEST + host)),
                 "allowed": allowed(p) if safety["ok"] else "nothing until it has a backup"}

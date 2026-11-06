@@ -148,6 +148,10 @@ class Companions:
                         "report": json.loads(r["report"]) if r["report"] else None})
         return out
 
+    def report_of(self, name: str) -> dict | None:
+        row = self.db.execute("SELECT report FROM companions WHERE name = ?", (name,)).fetchone()
+        return json.loads(row[0]) if row and row[0] else None
+
     def names(self) -> set[str]:
         return {r[0] for r in self.db.execute("SELECT name FROM companions")}
 

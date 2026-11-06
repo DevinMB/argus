@@ -23,7 +23,8 @@ Each host's card has **Choose a window**: any weekday and a time on the host's o
 
 **No backup, no patching.** An update can break a machine, so Argus patches a host only when it can be brought back:
 
-- **a recent backup**: a job or timer that reports to Argus (`POST /job/<name>` or `/heartbeat/<name>`) when it finishes. Name it on the host's card and say how recent it must be: 1 day for a nightly backup, 8 (the default) for a weekly one, 31 for a monthly one. An older backup skips that week's window, and Argus pages to say why;
+- **a recent Proxmox backup**: on a Proxmox server, the companion reads each guest's newest vzdump backup from the server's backup storages (directory, NFS, CIFS or CephFS; Proxmox Backup Server is not read yet). The Proxmox server's card lists its guests and their backups, and a guest's own card picks its backup for you when the guest's name matches. Nothing to wire;
+- **a recent backup** of another kind: a job or timer that reports to Argus (`POST /job/<name>` or `/heartbeat/<name>`) when it finishes. Name it on the host's card and say how recent it must be: 1 day for a nightly backup, 8 (the default) for a weekly one, 31 for a monthly one. An older backup skips that week's window, and Argus pages to say why;
 - or **a ZFS root**, which Argus snapshots just before each run.
 
 With either, Argus installs what you chose for the host (all updates, or security updates only) and reboots when an update needs it, if you allowed that.

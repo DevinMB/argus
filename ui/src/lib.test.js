@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
+import { acrossSites, backupLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -282,5 +282,13 @@ describe("hosts", () => {
     } })).toBe("2 containers, 1 not running well, 2 disks, fullest 91% used, 3 updates waiting (1 security), needs a reboot.");
     expect(hostSentence({ status: "ok", report: { containers: null, disks: [{ total: 10, used: 1 }] } }))
       .toBe("Disk 10% used.");
+  });
+});
+
+describe("backupLabel", () => {
+  it("names the guest, its server and how old its backup is", () => {
+    const b = { vmid: 110, name: "deals-lab", type: "qemu", server: "butts-lab", at: 1000 };
+    expect(backupLabel(b, 1000 + 2 * 86400)).toBe(`VM 110 deals-lab on butts-lab, backed up ${agoText(2 * 86400)}`);
+    expect(backupLabel({ ...b, type: "lxc", vmid: 105, at: null })).toBe("CT 105 deals-lab on butts-lab, no backup yet");
   });
 });

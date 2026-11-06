@@ -423,3 +423,9 @@ export function hostSentence(host) {
   const text = parts.length ? parts.join(", ") : "reporting";
   return text[0].toUpperCase() + text.slice(1) + ".";
 }
+
+// "VM 110 deals-lab on butts-lab, backed up 2d ago"
+export function backupLabel(b, now = Date.now() / 1000) {
+  const what = `${b.type === "lxc" ? "CT" : "VM"} ${b.vmid}${b.name ? ` ${b.name}` : ""} on ${b.server}`;
+  return `${what}, ${b.at ? `backed up ${agoText(now - b.at)}` : "no backup yet"}`;
+}

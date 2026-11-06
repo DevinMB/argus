@@ -254,11 +254,35 @@ class PatchPlan(BaseModel):
     time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     level: Literal["security", "full"] = "full"
     reboot: bool = True
-    backup: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
+    # A job or heartbeat, or a guest's vzdump backup seen by a Proxmox host: pve:<host>/<vmid>.
+    backup: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$"
+                                    r"|^pve:[a-z0-9][a-z0-9-]{0,62}/[0-9]{1,9}$")
     backup_days: int = Field(8, ge=1, le=366)  # how recent the backup must be
     restore: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
     elsewhere: bool = False
     elsewhere_job: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
+
+
+class PveBackup(BaseModel):
+    at: float = Field(gt=0)
+    storage: str = Field("", max_length=100)
+    size: int = Field(0, ge=0)
+
+
+class PveGuest(BaseModel):
+    vmid: int = Field(ge=1, le=999_999_999)
+    name: str = Field("", max_length=100)
+    type: Literal["qemu", "lxc"]
+    status: str = Field("", max_length=20)
+    backup: PveBackup | None = None
+
+
+class Proxmox(BaseModel):
+    """A Proxmox server's guests and the newest vzdump backup of each."""
+
+    node: str = Field("", max_length=100)
+    guests: list[PveGuest] = Field([], max_length=2000)
+    error: str = Field("", max_length=300)
 
 
 class Report(BaseModel):
@@ -283,6 +307,7 @@ class Report(BaseModel):
     patch: PatchState | None = None
     policy_roots: list[str] = Field([], max_length=50)
     collected: list[CollectedProject] = Field([], max_length=20)
+    proxmox: Proxmox | None = None
 
 
 class DeploySettings(BaseModel):
@@ -949,13 +974,15 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         views = r.companions.views()
         stacks = {d["companion"]: d["stacks"]
                   for d in request.app.state.deploys.views(views)}
+        backups = request.app.state.patching.pve_backups(views)
         for v in views:
             v["checks"] = [check_view(r, c) for c in r.companion_checks(v["name"])]
             v["stacks"] = stacks.get(v["name"], [])
-            v["patching"] = request.app.state.patching.view(v["name"], v["report"])
+            v["patching"] = request.app.state.patching.view(v["name"], v["report"], backups)
             v["adoptable"] = [] if v["read_only"] else request.app.state.adoption.projects(v)
         named = {c.companion for c in r.config.checks if c.companion}
-        return {"companions": views, "report_every": REPORT_EVERY, "now": r.clock(),
+        return {"companions": views, "backups": backups,
+                "report_every": REPORT_EVERY, "now": r.clock(),
                 "tls_pin": request.app.state.tls_pin is not None,
                 "unknown": sorted(named - r.companions.names())}
 
