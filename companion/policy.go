@@ -23,6 +23,9 @@ type Policy struct {
 	BindRoots []string `json:"bind_roots"`
 	// Host files any stack may mount read-only.
 	ReadOnlyBinds []string `json:"read_only_binds"`
+	// True: this program is updated only by re-running the install command, never
+	// by itself when Argus serves a newer build.
+	ManualUpdates bool `json:"manual_updates"`
 }
 
 func defaultPolicy() *Policy {

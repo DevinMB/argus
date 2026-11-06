@@ -116,6 +116,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 		"read_only", c.ReadOnly)
 	client, collector, checker := pinnedClient(c.Pin), newCollector(), newChecker()
 	patcher := newPatcher(stateDir, collector)
+	updater := newUpdater(client, c.URL, stateDir)
 	go patcher.AfterBoot() // a run that asked for a reboot finishes now
 	go checker.Loop(ctx)
 	every, failing := 60*time.Second, false
@@ -193,6 +194,18 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 			if deployer.Apply(plan) {
 				log.Info("deployed", "commit", plan.Commit)
 				wait = time.Second // report how it went at once
+			}
+		}
+		// Argus serves another build: take it between runs, never on a
+		// monitoring-only host or one whose policy says updates are by hand.
+		if b := reply.Companion; b != nil && !c.ReadOnly && !patcher.Busy() && updater.Due(b.SHA256) {
+			if p, err := loadPolicy(deployer.PolicyPath); err == nil && !p.ManualUpdates {
+				if err := updater.Update(b.SHA256); err != nil {
+					log.Error("update failed; trying again in an hour", "error", err)
+				} else {
+					log.Info("updated to the build Argus serves; restarting", "sha256", b.SHA256[:12])
+					return // the service manager starts the new program
+				}
 			}
 		}
 	}
