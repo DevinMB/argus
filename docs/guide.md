@@ -55,7 +55,7 @@ On **Updates**, press **Connect GitHub**. Argus makes its own GitHub App on your
 On **Hosts**, press **Add a host** and run the command it shows on the host. It installs the companion (a single static binary, amd64 or arm64) as a systemd service. Within a minute the host shows its containers, disks, failed systemd units, pending updates and whether it needs a reboot.
 
 - The companion only calls Argus; nothing on the host listens. Its first call pins Argus's TLS key, and every reply from Argus is signed with a key it pins at enrollment.
-- The code in the command works once, for 15 minutes. Removing a host revokes its token at once.
+- The code in the command works once, for 15 minutes; a command made for several hosts (up to 50) works once per host, for an hour, and each host takes its own name. Removing a host revokes its token at once.
 - A check with `companion: <host>` in `argus.yml` runs from inside that host, for services Argus cannot reach.
 - A host that misses three reports, or a disk past 95%, pages.
 - `argus-companion report` prints what it would send, without sending it.

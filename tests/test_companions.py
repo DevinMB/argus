@@ -135,6 +135,21 @@ def test_codes_expire_and_names_stay_unique(client, csrf, clock):
     assert (a["name"], b["name"], c["name"]) == ("nas", "nas-2", "vault")
 
 
+def test_one_command_for_several_hosts(client, csrf, clock):
+    # Twelve guests to add: one command, run on each, each named after itself.
+    out = new_code(client, csrf, hosts=3)
+    assert out["expires"] - clock.now == 3600
+    names = [enroll(client, out["code"], h).json()["name"] for h in ("shop", "notes", "nas")]
+    assert names == ["shop", "notes", "nas"]
+    assert "used" in enroll(client, out["code"], "fourth").json()["detail"]  # three, no more
+    r = client.post("/api/companions/codes", headers={"X-CSRF-Token": csrf},
+                    json={"url": "https://argus.lan", "hosts": 2, "name": "vault"})
+    assert r.status_code == 422 and "names each after itself" in r.json()["detail"]
+    late = new_code(client, csrf, hosts=5)["code"]
+    clock.now += 3601
+    assert "expired" in enroll(client, late, "late").json()["detail"]
+
+
 def test_removing_a_host_revokes_its_token(client, csrf):
     me = enroll(client, new_code(client, csrf)["code"]).json()
     r = client.delete(f"/api/companions/{me['id']}", headers={"X-CSRF-Token": csrf})

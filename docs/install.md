@@ -45,7 +45,7 @@ Everything else is set in the UI.
 
 ## Add a host
 
-On **Hosts**, press **Add a host**, copy the command and run it on the host. It downloads the companion from your Argus (checking Argus's key pin), enrolls with a code that works once for 15 minutes, writes a default policy to `/etc/argus-companion/policy.json`, and starts the `argus-companion` service. The host appears within a minute.
+On **Hosts**, press **Add a host**, copy the command and run it on the host. It downloads the companion from your Argus (checking Argus's key pin), enrolls with a code that works once for 15 minutes (or, made for several hosts, once per host for an hour), writes a default policy to `/etc/argus-companion/policy.json`, and starts the `argus-companion` service. The host appears within a minute.
 
 Tick **Monitoring only** if this host should report but never deploy or patch.
 
