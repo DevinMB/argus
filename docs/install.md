@@ -51,6 +51,8 @@ Tick **Monitoring only** if this host should report but never deploy or patch.
 
 A container you do not care about (a one-off job that exited, say) can be set aside with **Ignore** next to it on the host card: it moves to the bottom and no longer counts as trouble. Stopped containers never page either way.
 
+On a Proxmox server, Argus lists the guests on the server's card. **Add Argus** on a guest row (or **Add Argus to all** for the running ones) has the server install the companion in that guest for you: containers always, VMs when the QEMU guest agent runs in them (`apt install qemu-guest-agent`, and **Options, QEMU Guest Agent** on in Proxmox). Each guest joins under its Proxmox name. Home Assistant OS and other appliances without a shell cannot take a companion.
+
 A host is named after its hostname. When that name is no good (two Proxmox servers both called `pve`, a VM that calls itself `localhost`), use **Rename…** on its card. Its patch schedule and history come along, and nothing changes on the host. Deploys follow the new name: Argus sends it the stacks listed in `hosts/<new name>`.
 
 ### Remove a companion

@@ -431,3 +431,8 @@ export function backupLabel(b, now = Date.now() / 1000) {
   const what = `${b.type === "lxc" ? "CT" : "VM"} ${b.vmid}${b.name ? ` ${b.name}` : ""} on ${b.server}`;
   return `${what}, ${b.at ? `backed up ${agoText(now - b.at)}` : "no backup yet"}`;
 }
+
+// A guest's name as Argus names its host (as companions.name_from does).
+export function guestHostName(name) {
+  return name.split(".")[0].toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
+}

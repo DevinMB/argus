@@ -182,6 +182,8 @@ type Reply struct {
 	Patch       *PatchGrant `json:"patch"`
 	Collect     []string    `json:"collect"` // Compose projects to read for adoption
 	Companion   *Build      `json:"companion"`
+	// On a Proxmox server: guests to add the companion to.
+	GuestInstalls []GuestInstall `json:"guest_installs"`
 }
 
 // Build is the companion Argus serves for this host's CPU.

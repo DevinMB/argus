@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, backupLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
+import { acrossSites, backupLabel, guestHostName, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -272,6 +272,11 @@ describe("hosts", () => {
                   { name: "c", state: "exited" }];
     expect(sortContainers(list).map((c) => c.name)).toEqual(["a", "c", "b"]);
     expect(sortContainers(list, ["c"]).map((c) => c.name)).toEqual(["a", "b", "c"]);
+  });
+
+  it("names a guest's host the way Argus will", () => {
+    expect(guestHostName("haos15.0")).toBe("haos15");
+    expect(guestHostName("Site_B Monitoring")).toBe("site-b-monitoring");
   });
 
   it("does not count an ignored container as trouble", () => {

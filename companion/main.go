@@ -117,6 +117,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 	client, collector, checker := pinnedClient(c.Pin), newCollector(), newChecker()
 	patcher := newPatcher(stateDir, collector)
 	updater := newUpdater(client, c.URL, stateDir)
+	guests := newGuestInstaller()
 	go patcher.AfterBoot() // a run that asked for a reboot finishes now
 	go checker.Loop(ctx)
 	every, failing := 60*time.Second, false
@@ -141,6 +142,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 		}
 		report.Collected = collected
 		collected = nil
+		report.GuestInstalls = guests.Take()
 		reply, err := sendReport(client, c, report)
 		wait = every
 		if err != nil {
@@ -196,9 +198,19 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 				wait = time.Second // report how it went at once
 			}
 		}
+		// Add Argus to guests of this Proxmox server, when its policy allows.
+		if len(reply.GuestInstalls) > 0 && !c.ReadOnly && report.Proxmox != nil {
+			if p, err := loadPolicy(deployer.PolicyPath); err == nil && !p.NoGuestInstalls {
+				log.Info("adding Argus to guests", "count", len(reply.GuestInstalls))
+				guests.Start(reply.GuestInstalls)
+			}
+		}
+		if guests.Busy() {
+			wait = min(wait, 15*time.Second) // report each guest's result promptly
+		}
 		// Argus serves another build: take it between runs, never on a
 		// monitoring-only host or one whose policy says updates are by hand.
-		if b := reply.Companion; b != nil && !c.ReadOnly && !patcher.Busy() && updater.Due(b.SHA256) {
+		if b := reply.Companion; b != nil && !c.ReadOnly && !patcher.Busy() && !guests.Busy() && updater.Due(b.SHA256) {
 			if p, err := loadPolicy(deployer.PolicyPath); err == nil && !p.ManualUpdates {
 				if err := updater.Update(b.SHA256); err != nil {
 					log.Error("update failed; trying again in an hour", "error", err)

@@ -231,3 +231,49 @@ def test_a_container_the_owner_does_not_care_about_can_be_ignored(client, csrf, 
     rt.store.db.execute("UPDATE companions SET ignored = '[]'")
     backup.restore(settings, tmp_path, blob, "a long passphrase")
     assert client.get("/api/companions").json()["companions"][0]["ignored"] == ["smoke"]
+
+
+def test_add_argus_to_a_proxmox_guest_from_its_server(client, csrf, clock):
+    # Design decision 14: the server's companion installs the companion in a guest.
+    h = {"X-CSRF-Token": csrf}
+    pve = enroll(client, new_code(client, csrf)["code"], "pve").json()
+    px = {"node": "pve", "guests": [
+        {"vmid": 104, "name": "couchdb", "type": "qemu", "status": "running"},
+        {"vmid": 105, "name": "homepage", "type": "lxc", "status": "running"},
+        {"vmid": 109, "name": "herdr-lab", "type": "qemu", "status": "stopped"}]}
+    report(client, pve["token"], proxmox=px)
+    base = f"/api/companions/{pve['id']}/guests"
+    url = {"url": "https://192.168.10.18:8443"}
+    assert client.post(f"{base}/109/install", headers=h, json=url).status_code == 409
+    assert client.post(f"{base}/999/install", headers=h, json=url).status_code == 404
+    assert client.post(f"{base}/105/install", headers=h,
+                       json={"url": "https://x;reboot"}).status_code == 422
+    r = client.post(f"{base}/105/install", headers=h, json=url)
+    assert r.json() == {"ok": True, "name": "homepage"}
+
+    # The next signed reply names the guest; the command is the companion's to build.
+    reply = report(client, pve["token"], proxmox=px)[0].json()
+    [todo] = reply["guest_installs"]
+    assert {k: todo[k] for k in ("vmid", "type", "url")} == {
+        "vmid": 105, "type": "lxc", "url": "https://192.168.10.18:8443"}
+    assert set(todo) == {"vmid", "type", "url", "pin", "code"}
+    host = client.get("/api/companions").json()["companions"][0]
+    assert host["guest_installs"]["105"]["state"] == "running"
+
+    # The guest enrolls with that code under its Proxmox name, whatever its hostname.
+    guest = enroll(client, todo["code"], "localhost").json()
+    assert guest["name"] == "homepage"
+    done = {"vmid": 105, "code": todo["code"], "ok": True, "output": "enrolled as homepage"}
+    reply = report(client, pve["token"], proxmox=px, guest_installs=[done])[0].json()
+    assert "guest_installs" not in reply
+    views = {c["name"]: c for c in client.get("/api/companions").json()["companions"]}
+    assert views["pve"]["guest_installs"]["105"]["state"] == "ok"
+    assert client.post(f"{base}/105/install", headers=h, json=url).json()["detail"] == (
+        "a host called homepage is already in Argus")
+
+    # A server that never answers: the request fails, and says why.
+    client.post(f"{base}/104/install", headers=h, json=url)
+    clock.now += 61 * 60
+    views = {c["name"]: c for c in client.get("/api/companions").json()["companions"]}
+    assert views["pve"]["guest_installs"]["104"]["state"] == "failed"
+    assert "never answered" in views["pve"]["guest_installs"]["104"]["output"]

@@ -45,8 +45,9 @@ from argus.alerts import (
     recent_chats,
 )
 from argus.auth import COOKIE, SESSION_DAYS, Auth, AuthError, Session
-from argus.companions import REPORT_EVERY, EnrollError, Signer
+from argus.companions import REPORT_EVERY, EnrollError, Signer, name_from
 from argus.deploys import BRANCH, ENV_KEY, PULL_TOKEN, STACK, WRITE_TOKEN, Deploys
+from argus.guests import GIVE_UP, GuestInstalls
 from argus.metrics import registry
 from argus.patching import REQUEST, Patching
 from argus.probes import Result
@@ -193,6 +194,11 @@ class HostName(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
+class GuestInstall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    url: str = Field(max_length=300, pattern=r"^https?://[A-Za-z0-9.:\[\]-]+(/[A-Za-z0-9._~/-]*)?$")
+
+
 class Ignore(BaseModel):
     model_config = ConfigDict(extra="forbid")
     container: str = Field(min_length=1, max_length=255)
@@ -315,6 +321,13 @@ class Proxmox(BaseModel):
     error: str = Field("", max_length=300)
 
 
+class GuestResult(BaseModel):
+    vmid: int = Field(ge=1, le=999_999_999)
+    code: str = Field(max_length=40)
+    ok: bool
+    output: str = Field("", max_length=8000)
+
+
 class Report(BaseModel):
     nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{16,64}$")
     version: str = Field("", max_length=100)
@@ -338,6 +351,7 @@ class Report(BaseModel):
     policy_roots: list[str] = Field([], max_length=50)
     collected: list[CollectedProject] = Field([], max_length=20)
     proxmox: Proxmox | None = None
+    guest_installs: list[GuestResult] = Field([], max_length=50)
 
 
 class DeploySettings(BaseModel):
@@ -481,6 +495,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         app.state.configsrc = configsrc.ConfigSource(rt, settings, gh, rt.clock)
         app.state.patching = alerter.patching = Patching(rt.store.db, settings, rt, rt.clock)
         app.state.adoption = Adoption(settings, deploys, rt.clock)
+        app.state.guests = GuestInstalls(rt.clock)
         app.state.registry = registry(rt, gh, alerter.prometheus_test_active)
         tasks = []
         if start_scheduler:
@@ -1010,6 +1025,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             v["stacks"] = stacks.get(v["name"], [])
             v["patching"] = request.app.state.patching.view(v["name"], v["report"], backups)
             v["adoptable"] = [] if v["read_only"] else request.app.state.adoption.projects(v)
+            v["guest_installs"] = request.app.state.guests.view(v["name"])
         named = {c.companion for c in r.config.checks if c.companion}
         return {"companions": views, "backups": backups,
                 "report_every": REPORT_EVERY, "now": r.clock(),
@@ -1040,6 +1056,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         # Nothing of it stays to be inherited by a later host with the same name.
         request.app.state.patching.forget(name)
         request.app.state.adoption.forget(name)
+        request.app.state.guests.forget(name)
         return {"ok": True}
 
     @app.put("/api/companions/{cid}/name")
@@ -1055,7 +1072,33 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         if old != body.name:
             request.app.state.patching.rename(old, body.name)
             request.app.state.adoption.rename(old, body.name)
+            request.app.state.guests.rename(old, body.name)
         return {"ok": True, "name": body.name}
+
+    @app.post("/api/companions/{cid}/guests/{vmid}/install")
+    async def install_in_guest(cid: str, vmid: int, body: GuestInstall, request: Request,
+                               _: Admin) -> dict:
+        r = rt(request)
+        server = next((c for c in r.companions.views() if c["id"] == cid), None)
+        if server is None:
+            raise HTTPException(404, "no such host")
+        if server["read_only"]:
+            raise HTTPException(409, f"{server['name']} is monitoring only")
+        guests = ((server["report"] or {}).get("proxmox") or {}).get("guests") or []
+        g = next((x for x in guests if x["vmid"] == vmid), None)
+        if g is None:
+            raise HTTPException(404, f"{server['name']} has no guest {vmid}")
+        if g["status"] != "running":
+            raise HTTPException(409, f"{g['name'] or vmid} is not running")
+        name = name_from(g["name"]) if g["name"] else f"guest-{vmid}"
+        if name in r.companions.names():
+            raise HTTPException(409, f"a host called {name} is already in Argus")
+        url = body.url.rstrip("/")
+        pin = request.app.state.tls_pin if url.startswith("https://") else None
+        # An hour, as for several hosts: the server adds guests one at a time.
+        code, _expires = r.companions.new_code(name, ttl=GIVE_UP)
+        request.app.state.guests.request(server["name"], vmid, g["type"], name, url, pin, code)
+        return {"ok": True, "name": name}
 
     @app.put("/api/companions/{cid}/ignored")
     async def ignore_container(cid: str, body: Ignore, request: Request, _: Admin) -> dict:
@@ -1106,13 +1149,16 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             r.record_remote(row["name"], c.name, Result(c.ok, c.duration, c.error))
         # Collected files (with a .env) stay in memory for the preview, never stored.
         r.companions.save_report(row["id"],
-                                 rep.model_dump(exclude={"nonce", "checks", "collected"}),
+                                 rep.model_dump(exclude={"nonce", "checks", "collected",
+                                                         "guest_installs"}),
                                  address(request))
         if not row["read_only"]:
             request.app.state.adoption.received(row["name"],
                                                 [c.model_dump() for c in rep.collected])
         pt = request.app.state.patching
         pt.record(row["name"], rep.patch and rep.patch.model_dump())
+        gi = request.app.state.guests
+        gi.results(row["name"], [x.model_dump() for x in rep.guest_installs])
         body = {
             "name": row["name"],
             "report_every": REPORT_EVERY,
@@ -1137,6 +1183,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         # A monitoring-only host keeps the program it has: it is not Argus's to change.
         if not row["read_only"] and (sha := companion_sha256(rep.arch)):
             body["companion"] = {"sha256": sha}
+        if not row["read_only"] and rep.proxmox and (todo := gi.to_send(row["name"])):
+            body["guest_installs"] = todo
         run = pt.grant(row["name"], bool(row["read_only"]), rep.model_dump())
         if run:
             body["patch"] = run
