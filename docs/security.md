@@ -11,7 +11,7 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 ## The web UI
 
 - HTTPS from the first start. A fresh install can only be claimed with the setup code from its log.
-- Viewing is open on your network by default; one switch on the Account page requires sign-in for everything. Changing anything always needs the password.
+- Viewing is open on your network by default; one switch on the Settings, Account page requires sign-in for everything. Changing anything always needs the password.
 - Every change needs the session's CSRF token; the session cookie is HttpOnly and SameSite=Strict. Failed sign-ins are limited per address and overall.
 - A Content-Security-Policy allows only Argus's own scripts and styles, and no framing.
 - Exporting every secret (Back up Argus) asks for the password again.
