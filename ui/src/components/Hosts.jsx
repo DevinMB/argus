@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
-import { agoText, backupLabel, bytes, containerTrouble, diskTone, guestHostName, hostSentence, sortContainers } from "../lib.js";
+import { agoText, attention, backupLabel, bytes, containerTrouble, diskTone, guestHostName, hostSentence, hostSub, hostTree, patchLabel, sortContainers } from "../lib.js";
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
@@ -158,7 +158,7 @@ function Containers({ list, host, session, reload }) {
               <span className={`st-${tone} host-note`}>{off ? `ignored, ${c.health || c.state}` : c.health || c.state}</span>
               <span className="muted host-sub mono">{c.image}</span>
               {session?.signed_in && (off || containerTrouble(c)) && (
-                <button className="link-button small" onClick={() => toggle(c.name, !off)}>
+                <button className="btn btn-small" onClick={() => toggle(c.name, !off)}>
                   {off ? "Stop ignoring" : "Ignore"}
                 </button>
               )}
@@ -344,13 +344,13 @@ function PatchForm({ host, session, refs, backups, onSaved, onCancel }) {
             {refs.map((r) => <option key={r} value={r}>{r.replace(":", ": ")}</option>)}
           </select></label>
       </div>
-      <small className="muted">
+      <details className="about"><summary>How Argus decides a host is safe to patch</summary><p className="muted small">
         Argus patches a host only when it can be brought back: its backup is more recent than the
         days you set here, or the host has a ZFS root Argus snapshots first. On Proxmox, add Argus to
         the Proxmox server too and each guest's vzdump backup shows up here by itself; otherwise
         pick a job or timer that reports to Argus when your backup finishes. A restore test now
         and then is how you know the backup works: optional, and encouraged.
-      </small>
+      </p></details>
       <label className="toggle"><input type="checkbox" checked={p.reboot} onChange={(e) => set("reboot", e.target.checked)} />
         <span>Reboot when an update needs it</span></label>
       </>}
@@ -378,8 +378,7 @@ function Patching({ host, session, refs, backups, reload }) {
     }
   };
   return (
-    <section>
-      <h4 className="eyebrow">patching</h4>
+    <section className="patching">
       {pt.plan.elsewhere ? (
         <p className="small">
           Patched by something else{pt.elsewhere ? <>: {pt.elsewhere.title}{pt.elsewhere.schedule && `, ${pt.elsewhere.schedule}`}.{" "}
@@ -410,10 +409,10 @@ function Patching({ host, session, refs, backups, reload }) {
       {pt.requested && <p className="small muted">Patching on its next report, within a minute.</p>}
       {session?.signed_in && !host.read_only && !editing && (
         <div className="actions">
-          <button className="link-button small" onClick={() => setEditing(true)}>
+          <button className={`btn btn-small${pt.plan.enabled || pt.plan.elsewhere ? "" : " btn-primary"}`} onClick={() => setEditing(true)}>
             {pt.plan.enabled || pt.plan.elsewhere ? "Change how it is patched" : "Choose a window"}</button>
           {!pt.plan.elsewhere && (
-            <button className="link-button small" onClick={now} disabled={pt.requested || last?.result === "running"}>Patch now</button>
+            <button className="btn btn-small" onClick={now} disabled={pt.requested || last?.result === "running"}>Patch now</button>
           )}
         </div>
       )}
@@ -424,23 +423,39 @@ function Patching({ host, session, refs, backups, reload }) {
   );
 }
 
-// A Proxmox server's guests: which have a backup, and which have Argus on them.
+// A section of a host's page: a title, an optional "About" that explains it, and its content.
+function Section({ title, about, aside, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="hsec">
+      <header className="hsec-head">
+        <h3 className="eyebrow">{title}</h3>
+        {about && (
+          <button className="about-toggle" aria-expanded={open} onClick={() => setOpen(!open)} title="About this">
+            {open ? "Hide" : "About"}
+          </button>
+        )}
+        {aside && <span className="hsec-aside">{aside}</span>}
+      </header>
+      {open && <p className="about-text muted small">{about}</p>}
+      {children}
+    </section>
+  );
+}
+
 const INSTALL_NOTE = { waiting: "adding Argus…", running: "adding Argus…", ok: "Argus added", failed: "could not add Argus" };
 
-function Guests({ px, hostNames, host, session, reload }) {
+// Add Argus to guests through their server; shared by the list and the server's Guests tab.
+function useGuestInstall(server, session, reload) {
   const [error, setError] = useState(null);
-  const now = Date.now() / 1000;
-  const installs = host.guest_installs ?? {};
-  const has = (g) => hostNames.has(guestHostName(g.name));
-  const without = px.guests.filter((g) => !has(g));
-  const canAdd = (g) => session?.signed_in && !host.read_only && g.status === "running" && !has(g)
+  const installs = server.guest_installs ?? {};
+  const canAdd = (g, has) => session?.signed_in && !server.read_only && g.status === "running" && !has
     && !["waiting", "running", "ok"].includes(installs[g.vmid]?.state);
-  const addable = px.guests.filter(canAdd);
   const add = async (list) => {
     setError(null);
     for (const g of list) {
       try {
-        await send("POST", `/api/companions/${host.id}/guests/${g.vmid}/install`,
+        await send("POST", `/api/companions/${server.id}/guests/${g.vmid}/install`,
           { url: window.location.origin }, session.csrf);
       } catch (e) {
         setError(`${g.name || g.vmid}: ${e.message}`);
@@ -448,232 +463,407 @@ function Guests({ px, hostNames, host, session, reload }) {
     }
     reload();
   };
+  return { installs, canAdd, add, error };
+}
+
+function backupText(g, now = Date.now() / 1000) {
+  return g.backup ? `backed up ${agoText(now - g.backup.at)}` : "no backup";
+}
+
+function backupTone(g, now = Date.now() / 1000) {
+  return !g.backup ? "failing" : now - g.backup.at < 8 * 86400 ? "up" : "failing";
+}
+
+function Tags({ items, empty = "all good" }) {
+  if (!items.length) return <span className="tag tag-ok">{empty}</span>;
+  return <span className="tags">{items.map(([tone, text]) => <span key={text} className={`tag tag-${tone}`}>{text}</span>)}</span>;
+}
+
+const open = (name, tab) => { window.location.hash = `/hosts?host=${encodeURIComponent(name)}${tab ? `&tab=${tab}` : ""}`; };
+
+function HostRow({ host, guest, child, toggle }) {
+  const [tone, word] = STATUS[host.status];
+  const [ptone, ptext] = patchLabel(host);
   return (
-    <section>
-      <h4 className="eyebrow">guests</h4>
-      <p className="muted small section-why">
-        Your apps run in these VMs and containers. Add Argus to each one to see its containers, watch
-        it and patch it; the backup shown here is its safety net, linked for you. <strong>Add Argus</strong> has
-        this server install it in the guest: containers always work, VMs need the QEMU guest agent.
-        {without.length > 0 && ` ${without.length} of ${px.guests.length} without Argus yet.`}
-      </p>
-      {addable.length > 1 && (
-        <p><button className="btn" onClick={() => add(addable)}>Add Argus to all {addable.length} running</button></p>
-      )}
-      <ul className="host-list">{px.guests.map((g) => {
-        const age = g.backup && now - g.backup.at;
-        const tone = !g.backup ? "unknown" : age < 8 * 86400 ? "up" : "failing";
-        const inst = installs[g.vmid];
+    <div className={`fleet-row${child ? " fleet-child" : ""}`}>
+      <span className="fleet-name">
+        {toggle ? (
+          <button className="fold" aria-expanded={toggle.open} onClick={toggle.flip}
+                  title={toggle.open ? "Hide its guests" : "Show its guests"}>{toggle.open ? "▾" : "▸"}</button>
+        ) : !child && <span className="fold-space" />}
+        <span className={`dot dot-${tone}`} title={word} />
+        <a className="fleet-title" href={`#/hosts?host=${encodeURIComponent(host.name)}`}>
+          <strong>{host.name}</strong><span className="muted small">{hostSub(host, guest)}</span></a>
+      </span>
+      <span className="fleet-tags"><Tags items={attention(host)} />
+        {guest && <span className={`tag tag-${backupTone(guest) === "up" ? "quiet" : "failing"}`}>{backupText(guest)}</span>}</span>
+      <span className={`fleet-patch small st-${ptone}`}>{ptext}</span>
+      <span className="fleet-seen small muted">{host.last_seen ? agoText(host.age) : "waiting"}</span>
+      <a className="fleet-go" href={`#/hosts?host=${encodeURIComponent(host.name)}`} aria-label={`Open ${host.name}`}>›</a>
+    </div>
+  );
+}
+
+function GuestRow({ guest, install, canAdd, onAdd }) {
+  return (
+    <div className="fleet-row fleet-child fleet-bare">
+      <span className="fleet-name">
+        <span className="dot dot-hollow" title="no Argus" />
+        <span className="fleet-title"><span>{guest.name || "(no name)"}</span>
+          <span className="muted small">{guest.type === "lxc" ? "CT" : "VM"} {guest.vmid} · {guest.status}</span></span>
+      </span>
+      <span className="fleet-tags">
+        <span className={`tag tag-${backupTone(guest) === "up" ? "quiet" : "failing"}`}>{backupText(guest)}</span>
+        {install && <span className={`tag tag-${install.state === "failed" ? "down" : "unknown"}`}>{INSTALL_NOTE[install.state]}</span>}
+      </span>
+      <span className="fleet-act">
+        {canAdd && <button className="btn btn-small" onClick={() => onAdd([guest])}>{install?.state === "failed" ? "Try again" : "Add Argus"}</button>}
+      </span>
+    </div>
+  );
+}
+
+function remembered(key, initial) {
+  try { const v = localStorage.getItem(key); return v === null ? initial : v === "1"; } catch { return initial; }
+}
+
+function remember(key, value) {
+  try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* private window: forget it */ }
+}
+
+// A Proxmox server and its guests: those with Argus as hosts under it, the rest
+// folded into one line until asked for.
+function ServerGroup({ row, session, reload }) {
+  const { host, guests } = row;
+  const gi = useGuestInstall(host, session, reload);
+  const [open, setOpen] = useState(() => remembered(`argus.fold.${host.name}`, true));
+  const [bareOpen, setBareOpen] = useState(false);
+  const flip = () => { remember(`argus.fold.${host.name}`, !open); setOpen(!open); };
+  const withArgus = guests.filter((g) => g.host);
+  const bare = guests.filter((g) => !g.host);
+  const addable = bare.filter((g) => gi.canAdd(g.guest, false)).map((g) => g.guest);
+  const busy = bare.filter((g) => ["waiting", "running", "failed"].includes(gi.installs[g.guest.vmid]?.state));
+  // Guests being added, or that failed, stay in sight.
+  const shown = bareOpen ? bare : busy;
+  return (
+    <div className="fleet-group">
+      <HostRow host={host} toggle={{ open, flip }} />
+      {open && <>
+        {withArgus.map((g) => <HostRow key={g.host.id} host={g.host} guest={g.guest} child />)}
+        {bare.length > 0 && (
+          <div className="fleet-row fleet-child fleet-fold">
+            <span className="fleet-name">
+              <span className="dot dot-hollow" />
+              <span className="muted small">{bare.length} guest{bare.length === 1 ? "" : "s"} without Argus</span>
+            </span>
+            <span className="fleet-act">
+              {addable.length > 0 && session?.signed_in && (
+                <button className="btn btn-small" onClick={() => gi.add(addable)}>
+                  {addable.length === 1 ? `Add Argus to ${addable[0].name || addable[0].vmid}` : `Add Argus to all ${addable.length}`}</button>
+              )}
+              <button className="btn btn-small" onClick={() => setBareOpen(!bareOpen)}>{bareOpen ? "Hide" : "Show"}</button>
+            </span>
+          </div>
+        )}
+        {shown.map((g) => (
+          <GuestRow key={g.guest.vmid} guest={g.guest} install={gi.installs[g.guest.vmid]}
+                    canAdd={gi.canAdd(g.guest, false)} onAdd={gi.add} />
+        ))}
+      </>}
+      {gi.error && <p className="form-error fleet-error" role="alert">{gi.error}</p>}
+    </div>
+  );
+}
+
+function HostList({ hosts, session, reload }) {
+  const rows = hostTree(hosts);
+  return (
+    <div className="fleet" role="list">
+      <div className="fleet-row fleet-headrow" aria-hidden="true">
+        <span className="eyebrow">host</span><span className="eyebrow">needs a look</span>
+        <span className="eyebrow">patching</span><span className="eyebrow">reported</span><span />
+      </div>
+      {rows.map((row) => row.host.report?.proxmox
+        ? <ServerGroup key={row.host.id} row={row} session={session} reload={reload} />
+        : <div className="fleet-group" key={row.host.id}><HostRow host={row.host} /></div>)}
+    </div>
+  );
+}
+
+// The Guests tab of a Proxmox server.
+function Guests({ host, hostNames, session, reload }) {
+  const px = host.report.proxmox;
+  const gi = useGuestInstall(host, session, reload);
+  const has = (g) => hostNames.has(guestHostName(g.name || ""));
+  const addable = px.guests.filter((g) => gi.canAdd(g, has(g)));
+  return (
+    <Section title={`guests (${px.guests.length})`}
+      about={<>Your apps run in these VMs and containers. Add Argus to each to see its containers, watch it and
+        patch it; the backup shown is its safety net, linked for you. <strong>Add Argus</strong> has this server
+        install it in the guest: containers always work, VMs need the QEMU guest agent.</>}
+      aside={addable.length > 1 && <button className="btn btn-small" onClick={() => gi.add(addable)}>Add Argus to all {addable.length}</button>}>
+      <ul className="rows">{px.guests.map((g) => {
+        const inst = gi.installs[g.vmid];
+        const argus = has(g);
         return (
           <li key={`${g.type}${g.vmid}`}>
-            <span className={`dot dot-${tone}`} />
-            <span className="host-item">{g.name || "(no name)"} <span className="muted mono">{g.type === "lxc" ? "CT" : "VM"} {g.vmid}</span></span>
-            <span className={`host-note ${has(g) ? "st-up" : inst?.state === "failed" ? "st-failing" : "muted"}`}>
-              {has(g) ? "has Argus" : inst ? INSTALL_NOTE[inst.state] : g.status}</span>
-            <span className="muted host-sub">
-              {g.backup ? `Backed up ${agoText(age)} to ${g.backup.storage} (${bytes(g.backup.size)})` : "No backup this server can see"}
+            <span className={`dot dot-${argus ? "up" : "hollow"}`} />
+            <span className="row-main">
+              {argus ? <a href={`#/hosts?host=${encodeURIComponent(guestHostName(g.name))}`}>{g.name}</a> : g.name || "(no name)"}
+              <span className="muted mono"> {g.type === "lxc" ? "CT" : "VM"} {g.vmid}</span>
+              <span className="row-sub muted">{g.status} · {g.backup ? `backed up ${agoText(Date.now() / 1000 - g.backup.at)} to ${g.backup.storage} (${bytes(g.backup.size)})` : "no backup this server can see"}</span>
             </span>
-            {canAdd(g) && (
-              <button className="link-button small" onClick={() => add([g])}>
-                {inst?.state === "failed" ? "Try again" : "Add Argus"}
-              </button>
-            )}
+            <span className={`row-note ${argus ? "st-up" : inst?.state === "failed" ? "st-failing" : "muted"}`}>
+              {argus ? "has Argus" : inst ? INSTALL_NOTE[inst.state] : ""}</span>
+            <span className="row-act">
+              {gi.canAdd(g, argus) && <button className="btn btn-small" onClick={() => gi.add([g])}>{inst?.state === "failed" ? "Try again" : "Add Argus"}</button>}
+            </span>
             {inst?.state === "failed" && inst.output && (
-              <details className="small"><summary>What happened</summary><pre className="mono">{inst.output}</pre></details>
+              <details className="row-wide small"><summary>What happened</summary><pre className="log">{inst.output}</pre></details>
             )}
           </li>
         );
       })}</ul>
       {px.error && <p className="st-failing small">{px.error}</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
-    </section>
+      {gi.error && <p className="form-error" role="alert">{gi.error}</p>}
+    </Section>
   );
 }
 
 function NotFromGit({ host, session, reload }) {
-  const [open, setOpen] = useState(null);
+  const [openP, setOpenP] = useState(null);
   if (!host.adoptable?.length) return null;
   return (
-    <section>
-      <h4 className="eyebrow">running here, not deployed by Argus</h4>
-      <p className="muted small section-why">
-        Compose projects started by hand or another tool. <strong>Deploy from git</strong> puts each
+    <Section title="running here, not deployed by Argus"
+      about={<>Compose projects started by hand or another tool. <strong>Deploy from git</strong> puts each
         one's compose file in your deploy repo (its secrets stay in Argus) and from then on a merge
-        redeploys it, in the same folder, with no restart if nothing changed.
-      </p>
-      <ul className="host-list suggest">{host.adoptable.map((p) => (
+        redeploys it, in the same folder, with no restart if nothing changed.</>}>
+      <ul className="rows">{host.adoptable.map((p) => (
         <li key={p.project}>
           <span className="dot dot-unknown" />
-          <span className="host-item">{p.project} <span className="muted mono">{p.dir}</span></span>
-          {session?.signed_in && open !== p.project && (
-            <button className="btn" onClick={() => setOpen(p.project)}>{p.link ? "Link" : "Deploy from git"}</button>
-          )}
-          {open === p.project && (
-            <div className="host-wide">
+          <span className="row-main">{p.project}<span className="row-sub muted mono">{p.dir}</span></span>
+          <span className="row-note" />
+          <span className="row-act">
+            {session?.signed_in && openP !== p.project && (
+              <button className="btn btn-small" onClick={() => setOpenP(p.project)}>{p.link ? "Link" : "Deploy from git"}</button>
+            )}
+          </span>
+          {openP === p.project && (
+            <div className="row-wide">
               <Adopt host={host.name} project={p} session={session}
-                     onDone={() => { setOpen(null); reload(); }} onCancel={() => setOpen(null)} />
+                     onDone={() => { setOpenP(null); reload(); }} onCancel={() => setOpenP(null)} />
             </div>
           )}
         </li>
       ))}</ul>
-    </section>
+    </Section>
   );
 }
 
-function Host({ host, session, onRemoved, suggestions, onWatch, refs, backups, hostNames }) {
-  const [confirm, setConfirm] = useState(false);
-  const [naming, setNaming] = useState(null);
+function HostActions({ host, session, reload }) {
+  const [mode, setMode] = useState(null);
+  const [name, setName] = useState(host.name);
   const [error, setError] = useState(null);
-  const r = host.report;
+  if (!session?.signed_in) return null;
   const rename = async (e) => {
     e.preventDefault();
     try {
-      await send("PUT", `/api/companions/${host.id}/name`, { name: naming.trim() }, session.csrf);
-      setNaming(null);
-      setError(null);
-      onRemoved();
+      const out = await send("PUT", `/api/companions/${host.id}/name`, { name: name.trim() }, session.csrf);
+      setMode(null);
+      open(out.name);
+      reload();
     } catch (err) {
       setError(err.message);
     }
   };
-  const [tone, word] = STATUS[host.status];
   const remove = async () => {
     try {
       await send("DELETE", `/api/companions/${host.id}`, undefined, session.csrf);
-      onRemoved();
+      window.location.hash = "/hosts";
+      reload();
     } catch (e) {
       setError(e.message);
     }
   };
   return (
-    <article className={`host host-${host.status}`}>
-      <header className="host-head">
-        <span className={`dot dot-${tone}`} />
-        <h3>{host.name}</h3>
-        <span className={`st-${tone}`}>{word}</span>
-        {host.read_only && <span className="chip">monitoring only</span>}
-        <span className="muted host-seen">
-          {host.last_seen ? `reported ${agoText(host.age)}` : `enrolled ${agoText(Date.now() / 1000 - host.enrolled)}`}
+    <div className="host-actions">
+      {!mode && <>
+        <button className="btn btn-small" onClick={() => { setName(host.name); setMode("rename"); }}>Rename</button>
+        <button className="btn btn-small" onClick={() => setMode("remove")}>Remove</button>
+      </>}
+      {mode === "rename" && (
+        <form className="inline-form" onSubmit={rename}>
+          <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} aria-label="New name"
+                 pattern="[a-z0-9][a-z0-9\-]{0,62}" required autoFocus spellCheck="false" />
+          <button className="btn btn-small btn-primary">Save</button>
+          <button type="button" className="btn btn-small" onClick={() => setMode(null)}>Cancel</button>
+          <small className="muted">Its patch schedule and history come along. Deploys follow the new name (hosts/&lt;name&gt; in your deploy repo).</small>
+        </form>
+      )}
+      {mode === "remove" && (
+        <span className="inline-form small">
+          Remove {host.name}? Its token stops working at once; the program stays on the host until you uninstall it.
+          <button className="btn btn-small" onClick={remove}>Remove</button>
+          <button className="btn btn-small" onClick={() => setMode(null)}>Keep</button>
         </span>
-      </header>
-      <p className="host-sentence">{hostSentence(host)}</p>
-      {r && <p className="muted small">{[r.os, r.kernel, r.arch, r.version && `companion ${r.version}`, host.address].filter(Boolean).join(" · ")}</p>}
+      )}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </div>
+  );
+}
 
-      {host.stacks?.length > 0 && (
-        <section><h4 className="eyebrow">stacks it runs</h4><Stacks stacks={host.stacks} session={session} reload={onRemoved} /></section>
-      )}
-      {r?.containers?.length > 0 && <section><h4 className="eyebrow">containers</h4><Containers list={r.containers} host={host} session={session} reload={onRemoved} /></section>}
-      {r?.proxmox ? <Guests px={r.proxmox} hostNames={hostNames} host={host} session={session} reload={onRemoved} />
-        : r && !r.containers?.length && /-pve$/.test(r.kernel || "") && (
-        <p className="muted small">
-          This is a Proxmox server: your apps run in its VMs and containers, not on it. Update Argus
-          on this server (run Add a host again) to see its guests and their backups here.
-        </p>
-      )}
-      <NotFromGit host={host} session={session} reload={onRemoved} />
-      {suggestions?.length > 0 && (
-        <section>
-          <h4 className="eyebrow">not watched yet</h4>
-          <p className="muted small section-why">
-            Ports these containers publish that no check covers. <strong>Watch</strong> adds a check,
-            so Argus tells you when one stops answering.
-          </p>
-          <ul className="host-list suggest">{suggestions.map((g) => (
-            <li key={g.port}><span className="dot dot-unknown" />
-              <span className="host-item">{g.container} <span className="muted mono">:{g.port}</span></span>
-              {session?.signed_in && <button className="btn" onClick={() => onWatch(g.check)}>Watch</button>}</li>
-          ))}</ul>
-        </section>
-      )}
-      {r?.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
-      {r?.disks?.length > 0 && <section><h4 className="eyebrow">disks</h4><Disks disks={r.disks} /></section>}
-      {r?.failed_units?.length > 0 && (
-        <section>
-          <h4 className="eyebrow">failed systemd units</h4>
-          <ul className="host-list">{r.failed_units.map((u) => (
-            <li key={u}><span className="dot dot-down" /><span className="host-item mono">{u}</span></li>
-          ))}</ul>
-        </section>
-      )}
-      <Patching host={host} session={session} refs={refs} backups={backups} reload={onRemoved} />
-      {(r?.updates || r?.reboot_required) && (
-        <section>
-          <h4 className="eyebrow">updates</h4>
+function Overview({ host, suggestions, onWatch, session }) {
+  const r = host.report ?? {};
+  const look = attention(host);
+  return (
+    <>
+      <Section title="needs a look">
+        {look.length ? <Tags items={look} /> : <p className="muted small">Nothing. {hostSentence(host)}</p>}
+        {r.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
+        {r.updates?.error && <p className="st-failing small">Updates: {r.updates.error}</p>}
+      </Section>
+      {r.disks?.length > 0 && <Section title="disks"><Disks disks={r.disks} /></Section>}
+      {(r.updates || r.reboot_required) && (
+        <Section title="updates">
           <p className="small">
-            {r.updates?.error ? <span className="st-failing">{r.updates.error}</span>
-              : r.updates?.pending != null && (r.updates.pending
-                ? `${r.updates.pending} waiting${r.updates.security != null ? `, ${r.updates.security} of them security` : ""} (${r.updates.manager}).`
-                : `Up to date (${r.updates.manager}).`)}
+            {r.updates?.pending != null && (r.updates.pending
+              ? `${r.updates.pending} waiting${r.updates.security != null ? `, ${r.updates.security} of them security` : ""} (${r.updates.manager}).`
+              : `Up to date (${r.updates.manager}).`)}
             {r.reboot_required && <span className="st-failing"> Needs a reboot.</span>}
           </p>
-        </section>
+        </Section>
+      )}
+      {r.failed_units?.length > 0 && (
+        <Section title="failed systemd units">
+          <ul className="rows">{r.failed_units.map((u) => (
+            <li key={u}><span className="dot dot-down" /><span className="row-main mono">{u}</span></li>
+          ))}</ul>
+        </Section>
       )}
       {host.checks.length > 0 && (
-        <section>
-          <h4 className="eyebrow">checks run from here</h4>
-          <ul className="host-list">{host.checks.map((c) => (
+        <Section title="checks run from here">
+          <ul className="rows">{host.checks.map((c) => (
             <li key={c.name}>
               <span className={`dot dot-${c.status === "unknown" ? "unknown" : c.status}`} />
-              <a className="host-item" href={`#/check/${encodeURIComponent(c.name)}`}>{c.name}</a>
-              <span className={`st-${c.status} host-note`}>{c.status}</span>
-              <span className="muted host-sub mono">{c.kind} {c.target}</span>
+              <span className="row-main"><a href={`#/check/${encodeURIComponent(c.name)}`}>{c.name}</a>
+                <span className="row-sub muted mono">{c.kind} {c.target}</span></span>
+              <span className={`row-note st-${c.status}`}>{c.status}</span>
             </li>
           ))}</ul>
-        </section>
+        </Section>
       )}
+      {suggestions?.length > 0 && (
+        <Section title="not watched yet"
+          about="Ports these containers publish that no check covers. Watch adds a check, so Argus tells you when one stops answering.">
+          <ul className="rows">{suggestions.map((g) => (
+            <li key={g.port}><span className="dot dot-unknown" />
+              <span className="row-main">{g.container} <span className="muted mono">:{g.port}</span></span>
+              <span className="row-note" />
+              <span className="row-act">{session?.signed_in && <button className="btn btn-small" onClick={() => onWatch(g.check)}>Watch</button>}</span></li>
+          ))}</ul>
+        </Section>
+      )}
+    </>
+  );
+}
 
-      {session?.signed_in && (
-        <div className="host-foot">
-          {naming === null && !confirm && (
-            <button className="link-button small" onClick={() => setNaming(host.name)}>Rename…</button>
-          )}{" "}
-          {naming !== null && (
-            <form className="small" onSubmit={rename}>
-              <label>New name{" "}
-                <input value={naming} onChange={(e) => setNaming(e.target.value.toLowerCase())}
-                  pattern="[a-z0-9][a-z0-9\-]{0,62}" required autoFocus /></label>{" "}
-              <button className="btn">Rename</button>{" "}
-              <button type="button" className="link-button" onClick={() => setNaming(null)}>Cancel</button>
-              <p className="muted">Its patch schedule and history come along. Deploys follow the new
-                name: Argus sends it the stacks in hosts/&lt;new name&gt; in your deploy repo.</p>
-            </form>
-          )}
-          {naming === null && !confirm && <button className="link-button small" onClick={() => setConfirm(true)}>Remove…</button>}
-          {confirm && (
-            <span className="small">
-              Remove {host.name}? Its token stops working at once; the program stays on the host
-              until you uninstall it.{" "}
-              <button className="btn" onClick={remove}>Remove</button>{" "}
-              <button className="link-button" onClick={() => setConfirm(false)}>Keep</button>
-            </span>
-          )}
-          {error && <p className="form-error" role="alert">{error}</p>}
-        </div>
-      )}
+function HostDetail({ host, tab, session, reload, refs, backups, hostNames, suggestions, onWatch }) {
+  const r = host.report ?? {};
+  const [tone, word] = STATUS[host.status];
+  const tabs = [["overview", "Overview"]];
+  if (r.containers) tabs.push(["containers", `Containers (${r.containers.length})`]);
+  if (r.proxmox) tabs.push(["guests", `Guests (${r.proxmox.guests.length})`]);
+  tabs.push(["patching", "Patching"]);
+  if (host.stacks?.length || host.adoptable?.length) tabs.push(["deploys", "Deploys"]);
+  const current = tabs.some(([k]) => k === tab) ? tab : "overview";
+  return (
+    <article className="host-detail">
+      <a className="back small muted" href="#/hosts">← Hosts</a>
+      <header className="hd-head">
+        <span className={`dot dot-${tone}`} />
+        <h1>{host.name}</h1>
+        <span className={`st-${tone}`}>{word}</span>
+        {host.read_only && <span className="chip">monitoring only</span>}
+        <span className="muted small hd-seen">{host.last_seen ? `reported ${agoText(host.age)}` : "waiting for its first report"}</span>
+      </header>
+      {host.report && <p className="muted small hd-sub">{[r.os, r.kernel, r.arch, r.version && `companion ${r.version}`, host.address].filter(Boolean).join(" · ")}</p>}
+      <HostActions host={host} session={session} reload={reload} />
+      <nav className="subtabs hd-tabs">
+        {tabs.map(([k, label]) => (
+          <a key={k} href={`#/hosts?host=${encodeURIComponent(host.name)}&tab=${k}`} aria-current={k === current ? "page" : undefined}>{label}</a>
+        ))}
+      </nav>
+      <div className="hd-body">
+        {current === "overview" && <Overview host={host} suggestions={suggestions} onWatch={onWatch} session={session} />}
+        {current === "containers" && (
+          <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never page.">
+            {r.containers.length ? <Containers list={r.containers} host={host} session={session} reload={reload} />
+              : <p className="muted small">Docker runs, with no containers.</p>}
+            {r.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
+          </Section>
+        )}
+        {current === "guests" && <Guests host={host} hostNames={hostNames} session={session} reload={reload} />}
+        {current === "patching" && (
+          <Section title="patching">
+            <Patching host={host} session={session} refs={refs} backups={backups} reload={reload} />
+          </Section>
+        )}
+        {current === "deploys" && <>
+          {host.stacks?.length > 0 && <Section title="stacks it runs"><Stacks stacks={host.stacks} session={session} reload={reload} /></Section>}
+          <NotFromGit host={host} session={session} reload={reload} />
+        </>}
+      </div>
     </article>
   );
 }
 
+function useHostRoute() {
+  const read = () => {
+    const q = new URLSearchParams((window.location.hash.split("?")[1]) ?? "");
+    return { name: q.get("host"), tab: q.get("tab") };
+  };
+  const [route, setRoute] = useState(read);
+  useEffect(() => {
+    const on = () => setRoute(read());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  return route;
+}
+
 export default function Hosts({ data, session, reload, start, refs = [] }) {
   const [adding, setAdding] = useState(false);
+  const route = useHostRoute();
   const hosts = data?.companions ?? [];
   const quiet = hosts.filter((h) => h.status === "quiet").length;
   const backups = data?.backups ?? [];
   const hostNames = new Set(hosts.flatMap((h) => [h.name, (h.report?.hostname ?? "").split(".")[0].toLowerCase()]).filter(Boolean));
+  const onWatch = (c) => { window.location.hash = ""; window.dispatchEvent(new CustomEvent("argus-watch", { detail: c })); };
+  const selected = route.name && hosts.find((h) => h.name === route.name);
+  if (selected) {
+    return (
+      <section className="hosts-page">
+        <HostDetail host={selected} tab={route.tab} session={session} reload={reload} refs={refs}
+                    backups={backups.filter((b) => b.server !== selected.name)} hostNames={hostNames}
+                    suggestions={(start?.suggestions ?? []).filter((g) => g.host === selected.name)} onWatch={onWatch} />
+      </section>
+    );
+  }
   return (
     <section className="hosts-page">
       <div className="hosts-head">
         <div>
           <h1>Hosts</h1>
-          <p className="lede">
+          <p className="lede muted">
             {hosts.length === 0 ? "No hosts yet. Add one to see its containers, disks and updates here."
-              : `${hosts.length} host${hosts.length === 1 ? "" : "s"} report${hosts.length === 1 ? "s" : ""} in every minute${quiet ? `; ${quiet} ha${quiet === 1 ? "s" : "ve"} gone quiet and page${quiet === 1 ? "s" : ""}` : ""}. A host that misses three reports, or a disk past 95%, pages you.`}
+              : `${hosts.length} host${hosts.length === 1 ? "" : "s"}${quiet ? `, ${quiet} gone quiet` : ""}. A host that misses three reports, or a disk past 95%, pages you.`}
           </p>
         </div>
         {!adding && (session?.signed_in
           ? <button className="btn btn-primary" onClick={() => setAdding(true)}>Add a host</button>
           : <a className="btn" href="#/account">Sign in to add a host</a>)}
       </div>
+      {route.name && <p className="banner banner-warn">There is no host called {route.name} any more. <a href="#/hosts">All hosts</a></p>}
       {adding && session?.signed_in && (
         <AddHost session={session} hosts={hosts} tlsPin={data?.tls_pin}
                  onClose={() => { setAdding(false); reload(); }} />
@@ -684,14 +874,7 @@ export default function Hosts({ data, session, reload, start, refs = [] }) {
           added here yet. Those checks wait until {data.unknown.length === 1 ? "it reports" : "they report"}.
         </p>
       )}
-      <div className="hosts">
-        {hosts.map((h) => (
-          <Host key={h.id} host={h} session={session} onRemoved={reload} refs={refs}
-                backups={backups.filter((b) => b.server !== h.name)} hostNames={hostNames}
-                suggestions={(start?.suggestions ?? []).filter((g) => g.host === h.name)}
-                onWatch={(c) => { window.location.hash = ""; window.dispatchEvent(new CustomEvent("argus-watch", { detail: c })); }} />
-        ))}
-      </div>
+      {hosts.length > 0 && <HostList hosts={hosts} session={session} reload={reload} />}
     </section>
   );
 }

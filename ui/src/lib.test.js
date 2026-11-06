@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, backupLabel, guestHostName, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
+import { acrossSites, attention, backupLabel, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -302,5 +302,31 @@ describe("backupLabel", () => {
     const b = { vmid: 110, name: "deals-lab", type: "qemu", server: "butts-lab", at: 1000 };
     expect(backupLabel(b, 1000 + 2 * 86400)).toBe(`VM 110 deals-lab on butts-lab, backed up ${agoText(2 * 86400)}`);
     expect(backupLabel({ ...b, type: "lxc", vmid: 105, at: null })).toBe("CT 105 deals-lab on butts-lab, no backup yet");
+  });
+});
+
+describe("the hosts list", () => {
+  const ok = { name: "web", status: "ok", report: { os: "Debian GNU/Linux 13 (trixie)", disks: [] }, address: "10.0.0.5" };
+  it("says what needs a look, worst first", () => {
+    expect(attention(ok)).toEqual([]);
+    expect(attention({ ...ok, ignored: ["smoke"], report: {
+      containers: [{ name: "a", state: "exited" }, { name: "smoke", state: "exited" }],
+      disks: [{ mount: "/", total: 100, used: 96 }], updates: { pending: 47, security: 3 }, reboot_required: true } }))
+      .toEqual([["down", "1 container down"], ["down", "/ 96% full"], ["failing", "47 updates, 3 security"], ["failing", "needs a reboot"]]);
+    expect(attention({ status: "waiting" })).toEqual([["unknown", "waiting for its first report"]]);
+  });
+  it("puts each guest under its Proxmox server", () => {
+    const pve = { name: "butts-infra", report: { proxmox: { guests: [
+      { vmid: 104, name: "couchdb", type: "qemu" }, { vmid: 105, name: "homepage", type: "lxc" }] } } };
+    const couch = { name: "couchdb", report: {} };
+    const rows = hostTree([pve, couch, ok]);
+    expect(rows.map((r) => r.host.name)).toEqual(["butts-infra", "web"]);
+    expect(rows[0].guests.map((g) => g.host?.name ?? null)).toEqual(["couchdb", null]);
+  });
+  it("names the patch window and what a host is", () => {
+    expect(patchLabel({ patching: { plan: { enabled: true, day: 1, time: "03:00" } } })).toEqual(["up", "Tue 03:00"]);
+    expect(patchLabel({ patching: { plan: { enabled: false } } })).toEqual(["unknown", "not set"]);
+    expect(hostSub(ok)).toBe("Debian 13 · 10.0.0.5");
+    expect(hostSub(ok, { type: "lxc", vmid: 105 })).toBe("CT 105 · Debian 13 · 10.0.0.5");
   });
 });

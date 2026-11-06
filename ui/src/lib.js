@@ -436,3 +436,66 @@ export function backupLabel(b, now = Date.now() / 1000) {
 export function guestHostName(name) {
   return name.split(".")[0].toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
 }
+
+// What on a host needs a look, worst first, as short tags: [tone, text].
+export function attention(host) {
+  if (host.status === "waiting") return [["unknown", "waiting for its first report"]];
+  const r = host.report ?? {};
+  const out = [];
+  if (host.status === "quiet") out.push(["down", `quiet ${agoText(host.age)}`]);
+  const ignored = host.ignored ?? [];
+  const bad = (r.containers ?? []).filter((c) => !ignored.includes(c.name) && containerTrouble(c)).length;
+  if (bad) out.push(["down", `${bad} container${bad === 1 ? "" : "s"} down`]);
+  if (r.failed_units?.length) out.push(["down", `${r.failed_units.length} failed unit${r.failed_units.length === 1 ? "" : "s"}`]);
+  const last = host.patching?.runs?.[0];
+  if (last?.result === "failed") out.push(["down", "last patch run failed"]);
+  for (const d of r.disks ?? []) {
+    const tone = diskTone(d);
+    if (tone !== "up") out.push([tone, `${d.mount} ${Math.round((d.used / d.total) * 100)}% full`]);
+  }
+  const u = r.updates;
+  if (u?.error) out.push(["failing", "updates unreadable"]);
+  else if (u?.pending) out.push([u.security ? "failing" : "unknown", `${u.pending} update${u.pending === 1 ? "" : "s"}${u.security ? `, ${u.security} security` : ""}`]);
+  if (r.reboot_required) out.push(["failing", "needs a reboot"]);
+  return out;
+}
+
+const SHORT_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// The patch column: "Tue 03:00", "elsewhere" or "not set".
+export function patchLabel(host) {
+  const p = host.patching?.plan;
+  if (host.read_only) return ["unknown", "monitoring only"];
+  if (!p) return ["unknown", "–"];
+  if (p.elsewhere) return ["unknown", "by something else"];
+  if (p.enabled) return ["up", `${SHORT_DAYS[p.day]} ${p.time}`];
+  return ["unknown", "not set"];
+}
+
+// Hosts as a tree: each Proxmox server with its guests (a guest that has Argus
+// is its own host, shown under its server), then the other hosts.
+export function hostTree(hosts) {
+  const byName = new Map(hosts.map((h) => [h.name, h]));
+  const placed = new Set();
+  const servers = hosts.filter((h) => h.report?.proxmox);
+  const rows = [];
+  for (const s of servers) {
+    placed.add(s.name);
+    const guests = s.report.proxmox.guests.map((g) => {
+      const h = byName.get(guestHostName(g.name || ""));
+      const host = h && !h.report?.proxmox && !placed.has(h.name) ? h : null;
+      if (host) placed.add(host.name);
+      return { guest: g, host };
+    });
+    rows.push({ host: s, guests });
+  }
+  for (const h of hosts) if (!placed.has(h.name)) rows.push({ host: h, guests: [] });
+  return rows;
+}
+
+// A short line under a host's name: what it is and where.
+export function hostSub(host, guest) {
+  const r = host?.report ?? {};
+  const os = r.proxmox ? "Proxmox VE" : (r.os || "").replace(/ GNU\/Linux/, "").replace(/\s*\(.*\)$/, "");
+  return [guest && `${guest.type === "lxc" ? "CT" : "VM"} ${guest.vmid}`, os, host?.address].filter(Boolean).join(" · ");
+}
