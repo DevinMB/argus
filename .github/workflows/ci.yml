@@ -180,6 +180,22 @@ jobs:
           id=$(jq -r '.companions[0].id' hosts.json)
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X DELETE https://localhost:8080/api/companions/$id
           sudo /usr/local/bin/argus-companion run --once 2>&1 | grep -q 'HTTP 401'
+
+          # Alpine, as root with no sudo (a Proxmox container, say): the same command
+          # without sudo installs an OpenRC service, and the host reports.
+          cmd=$(curl -sk -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' \
+            -d '{"url":"https://localhost:8080","name":"alpine"}' \
+            https://localhost:8080/api/companions/codes | jq -r .command)
+          docker run -d --name alpine --network host alpine:3.22 sleep infinity
+          docker exec alpine sh -c 'apk add -q curl openrc && mkdir -p /run/openrc && touch /run/openrc/softlevel'
+          docker exec alpine sh -c "${cmd/| sudo sh/| sh}"
+          for _ in $(seq 30); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[] | select(.name == "alpine") | .status == "ok"' hosts.json >/dev/null && break; sleep 2
+          done
+          jq -e '.companions[] | select(.name == "alpine") | .status == "ok" and .report.updates.manager == "apk"' hosts.json \
+            || { docker exec alpine rc-service argus-companion status; jq '.companions' hosts.json; exit 1; }
+          docker exec alpine rc-service argus-companion status
       # main only, and only in the published repo (forks and the pre-launch
       # name build but do not push): what passed every step above is what
       # people pull. :2 follows the newest build of major version 2.
