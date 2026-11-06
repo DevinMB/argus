@@ -179,7 +179,8 @@ jobs:
           # Self-update: a companion that differs from the build Argus serves replaces
           # itself (outside its sandbox) and restarts, with no install command re-run.
           served=$(docker exec argus sha256sum /app/companion/argus-companion-linux-amd64 | cut -d' ' -f1)
-          echo stale | sudo tee -a /usr/local/bin/argus-companion >/dev/null
+          # A running binary cannot be written in place: swap in an altered copy.
+          sudo sh -c 'cp /usr/local/bin/argus-companion /tmp/stale && echo stale >> /tmp/stale && mv /tmp/stale /usr/local/bin/argus-companion'
           test "$(sha256sum /usr/local/bin/argus-companion | cut -d' ' -f1)" != "$served"
           sudo systemctl restart argus-companion
           for _ in $(seq 40); do

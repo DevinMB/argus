@@ -29,7 +29,10 @@ func TestUpdateInstallsOnlyTheBuildArgusSigned(t *testing.T) {
 	u := &Updater{Exe: exe, Self: fileSHA256(exe), StateDir: dir, URL: srv.URL, client: srv.Client(),
 		tried: map[string]time.Time{},
 		run: func(_ time.Duration, _ []string, name string, args ...string) (string, error) {
-			installed = append(installed, name+" "+strings.Join(args[:2], " "))
+			installed = append(installed, name+" "+strings.Join(args, " "))
+			if name == "mv" {
+				return "", os.Rename(args[1], args[2])
+			}
 			b, _ := os.ReadFile(args[2])
 			return "", os.WriteFile(args[3], b, 0o755)
 		}}
@@ -54,7 +57,8 @@ func TestUpdateInstallsOnlyTheBuildArgusSigned(t *testing.T) {
 	if err := u.Update(want); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(exe); string(b) != "new build" || installed[0] != "install -m 0755" {
+	if b, _ := os.ReadFile(exe); string(b) != "new build" || len(installed) != 2 ||
+		!strings.HasSuffix(installed[0], exe+".new") || installed[1] != "mv -f "+exe+".new "+exe {
 		t.Fatalf("installed %q via %v", b, installed)
 	}
 	if left, _ := filepath.Glob(filepath.Join(dir, "*.new")); len(left) != 0 {

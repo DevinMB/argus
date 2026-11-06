@@ -15,7 +15,7 @@ import (
 // Updater replaces this program with the build Argus serves when they differ.
 // The build's sha256 comes in Argus's signed reply and the file over the pinned
 // connection, so nothing else can slip in a binary. The new file is installed
-// outside the service's read-only sandbox (as patch runs are) and the program
+// beside the program and renamed over it, outside the service's read-only sandbox (as patch runs are) and the program
 // then exits; systemd or OpenRC starts the new one.
 type Updater struct {
 	Exe, Self, StateDir, URL string
@@ -82,8 +82,14 @@ func (u *Updater) Update(sha string) error {
 	if got := hex.EncodeToString(h.Sum(nil)); got != sha {
 		return fmt.Errorf("the download's sha256 is %s, not the %s Argus signed", got[:12], sha[:12])
 	}
-	if out, err := u.run(time.Minute, nil, "install", "-m", "0755", tmp.Name(), u.Exe); err != nil {
+	// Beside the program, then renamed over it: a running binary cannot be
+	// written in place ("text file busy"), but it can be replaced.
+	next := u.Exe + ".new"
+	if out, err := u.run(time.Minute, nil, "install", "-m", "0755", tmp.Name(), next); err != nil {
 		return fmt.Errorf("install: %v %s", err, out)
+	}
+	if out, err := u.run(time.Minute, nil, "mv", "-f", next, u.Exe); err != nil {
+		return fmt.Errorf("replace: %v %s", err, out)
 	}
 	return nil
 }
