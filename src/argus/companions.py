@@ -146,6 +146,20 @@ class Companions:
             self.db.execute("DELETE FROM companions WHERE id = ?", (cid,))
         return row and row["name"]
 
+    def rename(self, cid: str, name: str) -> str | None:
+        """Give a host a new name; returns the old one, or None when there was no such
+        host. The companion never uses its name, so nothing changes on the host."""
+        if not NAME.match(name):
+            raise ValueError("a name is lowercase letters, digits and dashes")
+        with self.db:
+            row = self.db.execute("SELECT name FROM companions WHERE id = ?", (cid,)).fetchone()
+            if row is None or row["name"] == name:
+                return row and row["name"]
+            if self.db.execute("SELECT 1 FROM companions WHERE name = ?", (name,)).fetchone():
+                raise ValueError(f"another host is already called {name}")
+            self.db.execute("UPDATE companions SET name = ? WHERE id = ?", (name, cid))
+        return row["name"]
+
     # --- reports ---
 
     def save_report(self, cid: str, report: dict, address: str) -> None:

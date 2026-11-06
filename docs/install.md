@@ -49,6 +49,8 @@ On **Hosts**, press **Add a host**, copy the command and run it on the host. It 
 
 Tick **Monitoring only** if this host should report but never deploy or patch.
 
+A host is named after its hostname. When that name is no good (two Proxmox servers both called `pve`, a VM that calls itself `localhost`), use **Rename…** on its card. Its patch schedule and history come along, and nothing changes on the host. Deploys follow the new name: Argus sends it the stacks listed in `hosts/<new name>`.
+
 ### Remove a companion
 
 Remove the host on its card first (its token stops working at once), then on the host:

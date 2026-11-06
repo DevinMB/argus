@@ -97,6 +97,12 @@ class Adoption:
         for k in [k for k in self.collected if k[0] == host]:
             del self.collected[k]
 
+    def rename(self, old: str, new: str) -> None:
+        self.settings.set(REQUEST + new, self.settings.get(REQUEST + old))
+        self.settings.set(REQUEST + old, None)
+        for k in [k for k in self.collected if k[0] == old]:
+            self.collected[(new, k[1])] = self.collected.pop(k)
+
     def to_collect(self, host: str) -> list[str]:
         return self.settings.get(REQUEST + host) or []
 

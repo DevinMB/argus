@@ -185,7 +185,12 @@ class NewHost(BaseModel):
     read_only: bool = False
     hosts: int = Field(1, ge=1, le=50)  # one command for this many hosts
 
+
     _url = field_validator("url")(_http_url)
+
+class HostName(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
 class Enroll(BaseModel):
@@ -1030,6 +1035,21 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         request.app.state.patching.forget(name)
         request.app.state.adoption.forget(name)
         return {"ok": True}
+
+    @app.put("/api/companions/{cid}/name")
+    async def rename_host(cid: str, body: HostName, request: Request, _: Admin) -> dict:
+        # Hosts name themselves after their hostname, and two Proxmox servers both
+        # called pve, or a VM that calls itself localhost, need a better one.
+        try:
+            old = rt(request).companions.rename(cid, body.name)
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+        if old is None:
+            raise HTTPException(404, "no such host")
+        if old != body.name:
+            request.app.state.patching.rename(old, body.name)
+            request.app.state.adoption.rename(old, body.name)
+        return {"ok": True, "name": body.name}
 
     # --- companions: the hosts' side ---
 

@@ -84,6 +84,24 @@ class Patching:
         with self.db:
             self.db.execute("DELETE FROM patch_runs WHERE host = ?", (host,))
 
+    def rename(self, old: str, new: str) -> None:
+        """A renamed host keeps its schedule and runs, and guests whose backup its
+        Proxmox server sees keep pointing at it (pve:<server>/<vmid>)."""
+        for key in (SETTINGS, REQUEST):
+            self.settings.set(key + new, self.settings.get(key + old))
+            self.settings.set(key + old, None)
+        if old in self.skipped:
+            self.skipped[new] = self.skipped.pop(old)
+        with self.db:
+            self.db.execute("UPDATE patch_runs SET host = ? WHERE host = ?", (new, old))
+        keys = [r[0] for r in self.db.execute("SELECT key FROM settings WHERE key LIKE ?",
+                                               (SETTINGS + "%",))]
+        for k in keys:
+            plan = self.settings.get(k)
+            if isinstance(plan, dict) and plan.get("backup", "").startswith(f"pve:{old}/"):
+                vmid = plan["backup"].split("/", 1)[1]
+                self.settings.set(k, {**plan, "backup": f"pve:{new}/{vmid}"})
+
     # --- the safety net ---
 
     def _age(self, ref: str) -> float | None:
