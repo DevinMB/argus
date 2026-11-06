@@ -55,7 +55,7 @@ type Patcher struct {
 
 func newPatcher(stateDir string, c *Collector) *Patcher {
 	return &Patcher{StateDir: stateDir, collector: c, run: runOutside, settle: 5 * time.Minute,
-		reboot: func() error { return exec.Command("systemctl", "reboot").Run() }}
+		reboot: rebootHost}
 }
 
 // runOutside runs a command in a transient unit when systemd is there.
@@ -299,4 +299,13 @@ func zfsRoot(mountinfo string) string {
 		}
 	}
 	return ""
+}
+
+// rebootHost asks systemd to reboot, or the plain reboot command where there is
+// no systemd (Alpine on OpenRC).
+func rebootHost() error {
+	if has("systemctl") {
+		return exec.Command("systemctl", "reboot").Run()
+	}
+	return exec.Command("reboot").Run()
 }

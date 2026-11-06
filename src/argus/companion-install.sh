@@ -6,7 +6,7 @@
 #     | sudo sh -s -- --url https://ARGUS --pin PIN --code CODE [--read-only]
 #
 # It downloads the companion from the same Argus with the same pin, enrolls,
-# and starts it as a systemd service. Run it again to update the binary; it
+# and starts it as a systemd service (an OpenRC one on Alpine). Run it again to update the binary; it
 # keeps an existing enrollment unless given a new --code.
 set -eu
 
@@ -93,7 +93,27 @@ UNIT
   systemctl enable argus-companion >/dev/null 2>&1
   systemctl restart argus-companion
   echo "argus-companion is running; this host appears in Argus within a minute."
+elif command -v openrc-run >/dev/null 2>&1 && [ -d /etc/init.d ]; then
+  # Alpine and others on OpenRC: supervise-daemon restarts it like systemd would.
+  mkdir -p /var/lib/argus-companion && chmod 0700 /var/lib/argus-companion
+  cat > /etc/init.d/argus-companion <<'INIT'
+#!/sbin/openrc-run
+description="Argus companion: reports this host to Argus"
+supervisor=supervise-daemon
+command=/usr/local/bin/argus-companion
+command_args="run --config /etc/argus-companion/companion.json"
+respawn_delay=10
+export DOCKER_CONFIG=/var/lib/argus-companion/docker
+
+depend() {
+  need net
+}
+INIT
+  chmod 0755 /etc/init.d/argus-companion
+  rc-update add argus-companion default >/dev/null 2>&1
+  rc-service argus-companion restart >/dev/null 2>&1 || rc-service argus-companion start
+  echo "argus-companion is running; this host appears in Argus within a minute."
 else
-  echo "No systemd here. Start it with your init system:"
+  echo "No systemd or OpenRC here. Start it with your init system:"
   echo "  $BIN run --config $CONF"
 fi

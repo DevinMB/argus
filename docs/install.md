@@ -3,7 +3,7 @@
 ## What you need
 
 - A machine that is always on, with Docker: a NAS, a Pi 4 or 5, a small VM. Argus uses about 100 MB of memory.
-- For hosts you want to know about (containers, disks, updates, patching, deploys): Linux on amd64 or arm64, with root. systemd is used when it is there.
+- For hosts you want to know about (containers, disks, updates, patching, deploys): Linux on amd64 or arm64, with root. It runs as a systemd service, or an OpenRC one (Alpine); on Alpine, `apk add curl` first.
 - Optional: a Telegram account for alerts, a GitHub account for updates and deploys.
 
 ## Start Argus
@@ -58,6 +58,8 @@ sudo systemctl disable --now argus-companion
 sudo rm -rf /usr/local/bin/argus-companion /etc/argus-companion /etc/systemd/system/argus-companion.service
 sudo systemctl daemon-reload
 ```
+
+On OpenRC (Alpine): `rc-service argus-companion stop; rc-update del argus-companion; rm -rf /usr/local/bin/argus-companion /etc/argus-companion /etc/init.d/argus-companion`.
 
 Stacks it deployed keep running; their folders under `/var/lib/argus-companion/stacks` are yours to keep or delete. Adopted stacks were never moved.
 

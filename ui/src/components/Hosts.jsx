@@ -91,6 +91,10 @@ function AddHost({ session, hosts, tlsPin, onClose }) {
         <>
           <p>Run this on the host as a user who can sudo:</p>
           <pre className="snippet command">{made.command}</pre>
+          <p className="muted small">
+            Logged in as root on a host without sudo, as in many Alpine or Proxmox containers? Leave
+            out <code>sudo</code>. Alpine needs curl first: <code>apk add curl</code>.
+          </p>
           <div className="actions">
             <Copy text={made.command} />
             <button className="btn" type="button" onClick={onClose}>Done</button>
