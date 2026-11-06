@@ -279,6 +279,18 @@ def test_add_argus_to_a_proxmox_guest_from_its_server(client, csrf, clock):
     assert "never answered" in views["pve"]["guest_installs"]["104"]["output"]
 
 
+def test_a_restarted_proxmox_companion_keeps_its_guests_until_it_reads_them(client, csrf):
+    pve = enroll(client, new_code(client, csrf)["code"], "pve").json()
+    px = {"node": "pve", "guests": [{"vmid": 105, "name": "homepage", "type": "lxc",
+                                      "status": "running"}]}
+    report(client, pve["token"], kernel="7.0.14-28-pve", proxmox=px)
+    report(client, pve["token"], kernel="7.0.14-28-pve")  # just restarted: no reading yet
+    host = client.get("/api/companions").json()["companions"][0]
+    assert host["report"]["proxmox"]["guests"][0]["name"] == "homepage"
+    report(client, pve["token"], kernel="6.8.0-generic")  # not a Proxmox server any more
+    assert client.get("/api/companions").json()["companions"][0]["report"]["proxmox"] is None
+
+
 def test_an_appliance_guest_says_to_skip_it(client, csrf):
     h = {"X-CSRF-Token": csrf}
     pve = enroll(client, new_code(client, csrf)["code"], "pve").json()
