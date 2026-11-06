@@ -71,7 +71,7 @@ Companions are upgraded by running the **Add a host** command again without a co
 
 ## Back up Argus
 
-**Account, Back up Argus** exports one encrypted file with everything a new install needs to carry on: settings, secrets, hosts and Argus's certificate. Keep it off the machine Argus runs on. The home page reminds you until there is one. To restore, start a fresh Argus, sign in, and use **Restore from an export** on the same page.
+**Settings, Account, Back up Argus** exports one encrypted file with everything a new install needs to carry on: settings, secrets, hosts and Argus's certificate. Keep it off the machine Argus runs on. The home page reminds you until there is one. To restore, start a fresh Argus, sign in, and use **Restore from an export** on the same page.
 
 ## Forgot the password
 

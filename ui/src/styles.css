@@ -277,6 +277,11 @@ button { font: inherit; color: inherit; }
 }
 .tabs a:hover { color: var(--text); }
 .tabs a[aria-current="page"] { background: var(--raise); color: var(--text); }
+/* Settings pages: Account, GitHub and Config, one click apart. */
+.subtabs { display: flex; gap: 4px; padding-top: 20px; }
+.subtabs a { padding: 6px 12px; border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 13px; }
+.subtabs a:hover { color: var(--text); }
+.subtabs a[aria-current="page"] { background: var(--raise); color: var(--text); }
 .tab-badge {
   font: 600 10.5px/1 var(--mono); background: var(--failing); color: var(--bg);
   border-radius: 999px; padding: 3px 6px;

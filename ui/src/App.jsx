@@ -169,7 +169,7 @@ export default function App() {
           {data && <span className="hide-sm hide-md">config {data.info.config}</span>}
           {data && <span className="hide-sm hide-md">build {data.info.commit.slice(0, 7)}</span>}
           {session && (session.signed_in
-            ? <a className="top-link" href="#/account" aria-current={view === "account" ? "page" : undefined}>Account</a>
+            ? <a className="top-link" href="#/account" aria-current={["account", "github", "config"].includes(view) ? "page" : undefined}>Settings</a>
             : <a className="top-link" href="#/account">{session.setup_needed ? "Set up" : "Sign in"}</a>)}
         </div>
       </header>
@@ -192,6 +192,13 @@ export default function App() {
       {(locked || (settingsView && session && !session.signed_in)) && (
         <SignIn session={session} onSession={setSession}
                 why={locked ? "This Argus asks for the admin password to view anything." : undefined} />
+      )}
+      {!locked && session?.signed_in && ["account", "github", "config"].includes(view) && (
+        <nav className="subtabs" aria-label="Settings">
+          <a href="#/account" aria-current={view === "account" ? "page" : undefined}>Account</a>
+          <a href="#/github" aria-current={view === "github" ? "page" : undefined}>GitHub</a>
+          <a href="#/config" aria-current={view === "config" ? "page" : undefined}>Config</a>
+        </nav>
       )}
       {!locked && settingsView && session?.signed_in && view === "alerts" && <AlertsPage session={session} />}
       {!locked && settingsView && session?.signed_in && view === "github" && <GitHubPage session={session} />}

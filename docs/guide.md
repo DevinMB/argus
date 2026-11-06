@@ -81,4 +81,4 @@ Security: Argus only names the project. The companion finds its folder and compo
 
 ## Back up Argus
 
-Argus's data volume holds the key to every secret it keeps. **Account, Back up Argus** exports one file with the settings, secrets, hosts and Argus's certificate, encrypted under a passphrase you choose (scrypt and AES-256-GCM); it asks for the admin password again. **Restore from an export** on a new install carries on where the old one stopped: hosts keep reporting with their tokens, and replies are signed with the same key. Until an export exists, the home page reminds you.
+Argus's data volume holds the key to every secret it keeps. **Settings, Account, Back up Argus** exports one file with the settings, secrets, hosts and Argus's certificate, encrypted under a passphrase you choose (scrypt and AES-256-GCM); it asks for the admin password again. **Restore from an export** on a new install carries on where the old one stopped: hosts keep reporting with their tokens, and replies are signed with the same key. Until an export exists, the home page reminds you.
