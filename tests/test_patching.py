@@ -209,3 +209,33 @@ def test_a_proxmox_guest_uses_the_backup_its_server_sees(env):
     report(c, pve, local=TUE_0305, proxmox={"node": "pve1", "guests": guests})
     assert "patch" not in report(c, shop, local={**TUE_0305, "date": "2027-01-19"})
     assert "9 days old" in c.get("/api/companions").json()["companions"][1]["patching"]["skipped"]
+
+
+def test_renaming_a_host_keeps_its_plan_runs_and_guest_backups(env):
+    # Two Proxmox servers both call themselves pve; the owner renames one.
+    c, csrf, rt, clock = env
+    tok = enroll(c, csrf, "lab")
+    c.put("/api/patching/lab", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
+    job_ok(c, rt, clock, "nas-backup")
+    run = report(c, tok, local=TUE_0305)["patch"]
+    report(c, tok, local=TUE_0305, patch={"run": run["run"], "state": "ok", "summary": "done"})
+    enroll(c, csrf, "web")
+    rt_settings = c.app.state.patching.settings
+    rt_settings.set("patch.web", {**PLAN, "backup": "pve:lab/105"})
+    hosts = {h["name"]: h for h in c.get("/api/companions").json()["companions"]}
+
+    r = c.put(f"/api/companions/{hosts['lab']['id']}/name", headers=csrf, json={"name": "web"})
+    assert r.status_code == 409 and "already called web" in r.json()["detail"]
+    r = c.put(f"/api/companions/{hosts['lab']['id']}/name", headers=csrf, json={"name": "Bad!"})
+    assert r.status_code == 422
+    r = c.put(f"/api/companions/{hosts['lab']['id']}/name", headers=csrf, json={"name": "pve-b"})
+    assert r.status_code == 200
+
+    hosts = {h["name"]: h for h in c.get("/api/companions").json()["companions"]}
+    assert set(hosts) == {"pve-b", "web"}
+    assert hosts["pve-b"]["patching"]["plan"]["backup"] == "job:nas-backup"
+    assert [x["summary"] for x in hosts["pve-b"]["patching"]["runs"]] == ["done"]
+    assert hosts["web"]["patching"]["plan"]["backup"] == "pve:pve-b/105"
+    assert report(c, tok)  # the same token, nothing to change on the host
+    assert c.put("/api/companions/nope/name", headers=csrf,
+                 json={"name": "x"}).status_code == 404

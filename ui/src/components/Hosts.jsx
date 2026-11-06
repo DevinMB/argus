@@ -471,8 +471,20 @@ function NotFromGit({ host, session, reload }) {
 
 function Host({ host, session, onRemoved, suggestions, onWatch, refs, backups, hostNames }) {
   const [confirm, setConfirm] = useState(false);
+  const [naming, setNaming] = useState(null);
   const [error, setError] = useState(null);
   const r = host.report;
+  const rename = async (e) => {
+    e.preventDefault();
+    try {
+      await send("PUT", `/api/companions/${host.id}/name`, { name: naming.trim() }, session.csrf);
+      setNaming(null);
+      setError(null);
+      onRemoved();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
   const [tone, word] = STATUS[host.status];
   const remove = async () => {
     try {
@@ -561,7 +573,21 @@ function Host({ host, session, onRemoved, suggestions, onWatch, refs, backups, h
 
       {session?.signed_in && (
         <div className="host-foot">
-          {!confirm && <button className="link-button small" onClick={() => setConfirm(true)}>Remove…</button>}
+          {naming === null && !confirm && (
+            <button className="link-button small" onClick={() => setNaming(host.name)}>Rename…</button>
+          )}{" "}
+          {naming !== null && (
+            <form className="small" onSubmit={rename}>
+              <label>New name{" "}
+                <input value={naming} onChange={(e) => setNaming(e.target.value.toLowerCase())}
+                  pattern="[a-z0-9][a-z0-9\-]{0,62}" required autoFocus /></label>{" "}
+              <button className="btn">Rename</button>{" "}
+              <button type="button" className="link-button" onClick={() => setNaming(null)}>Cancel</button>
+              <p className="muted">Its patch schedule and history come along. Deploys follow the new
+                name: Argus sends it the stacks in hosts/&lt;new name&gt; in your deploy repo.</p>
+            </form>
+          )}
+          {naming === null && !confirm && <button className="link-button small" onClick={() => setConfirm(true)}>Remove…</button>}
           {confirm && (
             <span className="small">
               Remove {host.name}? Its token stops working at once; the program stays on the host
