@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS companion_codes (
 CREATE TABLE IF NOT EXISTS companions (
     id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL UNIQUE,
     enrolled REAL NOT NULL, last_seen REAL, address TEXT NOT NULL DEFAULT '',
-    read_only INTEGER NOT NULL, report TEXT
+    read_only INTEGER NOT NULL, report TEXT, ignored TEXT NOT NULL DEFAULT '[]'
 );
 """
 
@@ -85,6 +85,11 @@ class Companions:
             with self.db:
                 self.db.execute("ALTER TABLE companion_codes"
                                 " ADD COLUMN uses INTEGER NOT NULL DEFAULT 1")
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(companions)")}
+        if "ignored" not in cols:  # installs from before containers could be ignored
+            with self.db:
+                self.db.execute("ALTER TABLE companions"
+                                " ADD COLUMN ignored TEXT NOT NULL DEFAULT '[]'")
 
     # --- enrollment ---
 
@@ -178,8 +183,24 @@ class Companions:
             out.append({"id": r["id"], "name": r["name"], "enrolled": r["enrolled"],
                         "last_seen": seen, "age": seen and now - seen, "status": status,
                         "address": r["address"], "read_only": bool(r["read_only"]),
-                        "report": json.loads(r["report"]) if r["report"] else None})
+                        "report": json.loads(r["report"]) if r["report"] else None,
+                        "ignored": json.loads(r["ignored"])})
         return out
+
+    def ignore(self, cid: str, container: str, ignored: bool) -> list[str] | None:
+        """Containers the owner does not care about (a one-off that exited, say): the
+        page shows them apart and does not count them as trouble. Returns the new
+        list, or None when there was no such host."""
+        with self.db:
+            row = self.db.execute("SELECT ignored FROM companions WHERE id = ?",
+                                  (cid,)).fetchone()
+            if row is None:
+                return None
+            names = set(json.loads(row["ignored"]))
+            names = sorted(names | {container} if ignored else names - {container})
+            self.db.execute("UPDATE companions SET ignored = ? WHERE id = ?",
+                            (json.dumps(names), cid))
+        return names
 
     def report_of(self, name: str) -> dict | None:
         row = self.db.execute("SELECT report FROM companions WHERE name = ?", (name,)).fetchone()

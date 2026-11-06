@@ -193,6 +193,12 @@ class HostName(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
+class Ignore(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    container: str = Field(min_length=1, max_length=255)
+    ignored: bool
+
+
 class Enroll(BaseModel):
     model_config = ConfigDict(extra="forbid")
     code: str = Field(max_length=40)
@@ -1050,6 +1056,13 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             request.app.state.patching.rename(old, body.name)
             request.app.state.adoption.rename(old, body.name)
         return {"ok": True, "name": body.name}
+
+    @app.put("/api/companions/{cid}/ignored")
+    async def ignore_container(cid: str, body: Ignore, request: Request, _: Admin) -> dict:
+        names = rt(request).companions.ignore(cid, body.container, body.ignored)
+        if names is None:
+            raise HTTPException(404, "no such host")
+        return {"ignored": names}
 
     # --- companions: the hosts' side ---
 

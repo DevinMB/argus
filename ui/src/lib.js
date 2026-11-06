@@ -394,9 +394,10 @@ export function containerTrouble(c) {
   return c.state !== "running" || c.health === "unhealthy";
 }
 
-// Problems first, then by name.
-export function sortContainers(list = []) {
-  return [...list].sort((a, b) => (containerTrouble(b) - containerTrouble(a)) || a.name.localeCompare(b.name));
+// Problems first, ignored ones last, then by name.
+export function sortContainers(list = [], ignored = []) {
+  const rank = (c) => (ignored.includes(c.name) ? 2 : containerTrouble(c) ? 0 : 1);
+  return [...list].sort((a, b) => (rank(a) - rank(b)) || a.name.localeCompare(b.name));
 }
 
 // One plain sentence per host: what is running and what needs a look.
@@ -405,7 +406,8 @@ export function hostSentence(host) {
   const r = host.report ?? {};
   const parts = [];
   if (r.containers) {
-    const bad = r.containers.filter(containerTrouble).length;
+    const ignored = host.ignored ?? [];
+    const bad = r.containers.filter((c) => !ignored.includes(c.name) && containerTrouble(c)).length;
     const n = r.containers.length;
     parts.push(n === 0 ? "no containers"
       : bad ? `${n} container${n === 1 ? "" : "s"}, ${bad} not running well`
