@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, attention, backupLabel, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
+import { acrossSites, attention, backupLabel, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -328,5 +328,16 @@ describe("the hosts list", () => {
     expect(patchLabel({ patching: { plan: { enabled: false } } })).toEqual(["unknown", "not set"]);
     expect(hostSub(ok)).toBe("Debian 13 · 10.0.0.5");
     expect(hostSub(ok, { type: "lxc", vmid: 105 })).toBe("CT 105 · Debian 13 · 10.0.0.5");
+  });
+});
+
+describe("install help", () => {
+  it("explains the failures seen in the wild", () => {
+    expect(installHelp("sh: install: not found", { type: "qemu" }).title).toBe("This guest is an appliance");
+    const agent = installHelp("No QEMU guest agent configured\nexit status 255", { type: "qemu" });
+    expect(agent.manual).toBe(true);
+    expect(agent.steps.join(" ")).toContain("Shut the VM down");
+    expect(installHelp("curl: (7) Failed to connect", { type: "lxc" }).title).toBe("The guest could not reach Argus");
+    expect(installHelp("something odd").title).toBe("Adding Argus failed");
   });
 });
