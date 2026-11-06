@@ -55,8 +55,11 @@ class GuestInstalls:
         for it in items:
             r = reqs.get(it["vmid"])
             if r and r["code"] == it["code"] and r["state"] in ("waiting", "running"):
-                r.update(state="ok" if it["ok"] else "failed", output=it["output"][-2000:],
-                         at=self.clock())
+                out = it["output"][-2000:]
+                if not it["ok"] and "install: not found" in out:
+                    out = ("This guest lacks the basic tools a companion needs: an appliance "
+                           "such as Home Assistant OS, which updates itself. Skip it.\n" + out)
+                r.update(state="ok" if it["ok"] else "failed", output=out, at=self.clock())
 
     def view(self, server: str) -> dict[str, dict]:
         return {str(v): {k: r[k] for k in ("state", "output", "at", "name")}
