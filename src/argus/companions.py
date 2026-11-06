@@ -168,6 +168,14 @@ class Companions:
     # --- reports ---
 
     def save_report(self, cid: str, report: dict, address: str) -> None:
+        # A companion reads Proxmox in the background, so its first reports after a
+        # restart (every self-update) have no guests yet. Keep the last reading
+        # until a new one arrives, or the server's guests would jump around.
+        if report.get("proxmox") is None and str(report.get("kernel", "")).endswith("-pve"):
+            row = self.db.execute("SELECT report FROM companions WHERE id = ?", (cid,)).fetchone()
+            before = json.loads(row["report"]) if row and row["report"] else {}
+            if before.get("proxmox"):
+                report = {**report, "proxmox": before["proxmox"]}
         with self.db:
             self.db.execute("UPDATE companions SET last_seen = ?, address = ?, report = ?"
                             " WHERE id = ?", (self.clock(), address, json.dumps(report), cid))
