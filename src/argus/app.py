@@ -165,6 +165,7 @@ class NewHost(BaseModel):
     url: str = Field(max_length=300)
     name: str = Field("", pattern=r"^$|^[a-z0-9][a-z0-9-]{0,62}$")
     read_only: bool = False
+    hosts: int = Field(1, ge=1, le=50)  # one command for this many hosts
 
     _url = field_validator("url")(_http_url)
 
@@ -988,7 +989,10 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
 
     @app.post("/api/companions/codes")
     async def add_host(body: NewHost, request: Request, _: Admin) -> dict:
-        code, expires = rt(request).companions.new_code(body.name, body.read_only)
+        if body.hosts > 1 and body.name:
+            raise HTTPException(422, "a command for several hosts names each after itself; "
+                                     "leave the name empty")
+        code, expires = rt(request).companions.new_code(body.name, body.read_only, body.hosts)
         url = body.url.rstrip("/")
         pin = request.app.state.tls_pin if url.startswith("https://") else None
         q = shlex.quote

@@ -36,6 +36,8 @@ from cryptography.hazmat.primitives.serialization import (
 from argus.settings import Settings
 
 CODE_TTL = 15 * 60
+SEVERAL_TTL = 60 * 60  # a code for several hosts: time to go round them
+MAX_USES = 50
 REPORT_EVERY = 60  # seconds, told to each companion in every reply
 QUIET_AFTER = 3 * REPORT_EVERY  # three missed reports
 DISK_FULL = 0.95  # used share that pages
@@ -48,7 +50,7 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companion_codes (
     code_hash TEXT PRIMARY KEY, created REAL NOT NULL, expires REAL NOT NULL,
-    name TEXT NOT NULL, read_only INTEGER NOT NULL
+    name TEXT NOT NULL, read_only INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS companions (
     id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL UNIQUE,
@@ -78,20 +80,32 @@ class Companions:
         self.db = db
         self.clock = clock
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(companion_codes)")}
+        if "uses" not in cols:  # installs from before codes for several hosts
+            with self.db:
+                self.db.execute("ALTER TABLE companion_codes"
+                                " ADD COLUMN uses INTEGER NOT NULL DEFAULT 1")
 
     # --- enrollment ---
 
-    def new_code(self, name: str = "", read_only: bool = False) -> tuple[str, float]:
-        """A single-use code for one host. `name` is optional; empty means the
-        host's own name."""
+    def new_code(self, name: str = "", read_only: bool = False,
+                 uses: int = 1) -> tuple[str, float]:
+        """A code for `uses` hosts (one by default). `name` is optional and only for
+        one host; empty means each host's own name. A code for several hosts lasts
+        an hour, so one command can be run on each guest in turn."""
+        if uses > 1 and name:
+            raise ValueError("a code for several hosts names each host after itself")
+        uses = max(1, min(uses, MAX_USES))
         now = self.clock()
+        ttl = SEVERAL_TTL if uses > 1 else CODE_TTL
         raw = base64.b32encode(secrets.token_bytes(10)).decode().lower()
         code = "-".join(raw[i:i + 4] for i in range(0, 16, 4))
         with self.db:
             self.db.execute("DELETE FROM companion_codes WHERE expires < ?", (now,))
-            self.db.execute("INSERT INTO companion_codes VALUES (?, ?, ?, ?, ?)",
-                            (_hash(code), now, now + CODE_TTL, name, int(read_only)))
-        return code, now + CODE_TTL
+            self.db.execute("INSERT INTO companion_codes (code_hash, created, expires, name,"
+                            " read_only, uses) VALUES (?, ?, ?, ?, ?, ?)",
+                            (_hash(code), now, now + ttl, name, int(read_only), uses))
+        return code, now + ttl
 
     def enroll(self, code: str, hostname: str, address: str) -> tuple[str, str, str]:
         """Trade a code for a token. Returns (id, name, token)."""
@@ -101,7 +115,12 @@ class Companions:
                                   (_hash(code.strip().lower()),)).fetchone()
             if row is None or row["expires"] < now:
                 raise EnrollError("this code is unknown, used or expired; make a new one in Argus")
-            self.db.execute("DELETE FROM companion_codes WHERE code_hash = ?", (row["code_hash"],))
+            if row["uses"] > 1:
+                self.db.execute("UPDATE companion_codes SET uses = uses - 1 WHERE code_hash = ?",
+                                (row["code_hash"],))
+            else:
+                self.db.execute("DELETE FROM companion_codes WHERE code_hash = ?",
+                                (row["code_hash"],))
             base = row["name"] or name_from(hostname)
             taken = {r[0] for r in self.db.execute("SELECT name FROM companions")}
             name, n = base, 2

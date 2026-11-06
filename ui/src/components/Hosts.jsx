@@ -16,11 +16,12 @@ function Copy({ text }) {
   );
 }
 
-// "Add a host": one command with a single-use code, then wait for the host to appear.
+// "Add a host": one command with a code for one host or several, then wait for them to appear.
 function AddHost({ session, hosts, tlsPin, onClose }) {
   const [url, setUrl] = useState(window.location.origin);
   const [name, setName] = useState("");
   const [readOnly, setReadOnly] = useState(false);
+  const [count, setCount] = useState(1);
   const [made, setMade] = useState(null);
   const [error, setError] = useState(null);
   const [now, setNow] = useState(Date.now() / 1000);
@@ -33,14 +34,17 @@ function AddHost({ session, hosts, tlsPin, onClose }) {
     e.preventDefault();
     setError(null);
     try {
-      const out = await send("POST", "/api/companions/codes", { url, name, read_only: readOnly }, session.csrf);
-      setMade({ ...out, before: new Set(hosts.map((h) => h.id)) });
+      const several = count > 1;
+      const out = await send("POST", "/api/companions/codes",
+        { url, name: several ? "" : name, read_only: readOnly, hosts: count }, session.csrf);
+      setMade({ ...out, count, before: new Set(hosts.map((h) => h.id)) });
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const joined = made && hosts.find((h) => !made.before.has(h.id));
+  const arrived = made ? hosts.filter((h) => !made.before.has(h.id)) : [];
+  const joined = made && arrived.length >= made.count && arrived[arrived.length - 1];
   const left = made ? Math.max(0, Math.round(made.expires - now)) : 0;
   const plain = url.startsWith("http://");
 
@@ -68,11 +72,17 @@ function AddHost({ session, hosts, tlsPin, onClose }) {
             )}
           </label>
           <label className="field">
+            <span>How many hosts will run it</span>
+            <input type="number" min="1" max="50" value={count}
+                   onChange={(e) => setCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} />
+            <small>Adding several guests? Make one command and run it on each, within an hour; each host takes its own name.</small>
+          </label>
+          {count === 1 && <label className="field">
             <span>Name (optional)</span>
             <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="the host's own name"
                    pattern="[a-z0-9][a-z0-9\-]{0,62}" spellCheck="false" />
             <small>Lowercase letters, digits and dashes. Checks in argus.yml use it in <code>companion:</code>.</small>
-          </label>
+          </label>}
           <label className="toggle">
             <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
             <span>
@@ -89,7 +99,7 @@ function AddHost({ session, hosts, tlsPin, onClose }) {
       )}
       {made && !joined && (
         <>
-          <p>Run this on the host as a user who can sudo:</p>
+          <p>Run this on {made.count > 1 ? `each of the ${made.count} hosts` : "the host"} as a user who can sudo:</p>
           <pre className="snippet command">{made.command}</pre>
           <p className="muted small">
             Logged in as root on a host without sudo, as in many Alpine or Proxmox containers? Leave
@@ -100,15 +110,19 @@ function AddHost({ session, hosts, tlsPin, onClose }) {
             <button className="btn" type="button" onClick={onClose}>Done</button>
           </div>
           <p className="muted" aria-live="polite">
+            {made.count > 1 && arrived.length > 0 && <>{arrived.length} of {made.count} joined: {arrived.map((h) => h.name).join(", ")}. </>}
             {left > 0
-              ? <>Waiting for the host… The code works once, for {Math.floor(left / 60)}m {left % 60}s more.</>
+              ? <>Waiting for {made.count > 1 ? "the hosts" : "the host"}… The code works {made.count > 1 ? `for ${made.count - arrived.length} more` : "once"}, for {Math.floor(left / 60)}m {left % 60}s more.</>
               : <>The code has expired. <button className="link-button" type="button" onClick={() => setMade(null)}>Make a new one</button>.</>}
           </p>
         </>
       )}
       {joined && (
         <>
-          <p className="form-ok" role="status"><strong>{joined.name}</strong> joined. {hostSentence(joined)}</p>
+          <p className="form-ok" role="status">
+            {made.count > 1 ? <>All {made.count} joined: {arrived.map((h) => h.name).join(", ")}.</>
+              : <><strong>{joined.name}</strong> joined. {hostSentence(joined)}</>}
+          </p>
           <div className="actions"><button className="btn" type="button" onClick={onClose}>Done</button></div>
         </>
       )}
