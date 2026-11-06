@@ -800,3 +800,8 @@ a.btn { text-decoration: none; display: inline-block; }
 .help-cmd { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
 .help-cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 5px 8px; color: var(--text); }
 .help-cmd .btn { padding: 3px 10px; font-size: 12px; }
+.kind { font: 600 10.5px/1 var(--mono); letter-spacing: 0.06em; padding: 2px 5px; border-radius: 4px;
+  border: 1px solid var(--line-strong); color: var(--muted); }
+details.plumbing { border-top: 1px solid var(--line); padding-top: 8px; }
+details.plumbing > summary { cursor: pointer; }
+details.plumbing[open] > summary { margin-bottom: 4px; }

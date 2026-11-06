@@ -788,22 +788,33 @@ function NotWatched({ suggestions, session, reload }) {
     }
     setBusy(null);
   };
+  const apps = suggestions.filter((g) => !g.internal);
+  const plumbing = suggestions.filter((g) => g.internal);
+  const row = (g) => (
+    <li key={g.port}><span className="dot dot-unknown" />
+      <span className="row-main">{g.container} <span className="muted mono">:{g.port}</span>
+        <span className="row-sub muted"><span className="kind">{g.check.kind.toUpperCase()}</span>{" "}
+          <span className="mono">{g.check.target}</span></span></span>
+      <span className="row-note" />
+      <span className="row-act">{session?.signed_in && <>
+        <button className="btn btn-small" disabled={busy !== null} onClick={() => watch(g, false)}>Watch</button>
+        <button className="btn btn-small" disabled={busy !== null} onClick={() => watch(g, true)}>Watch and alert me</button>
+      </>}</span></li>
+  );
   return (
     <Section title="not watched yet"
-      about={<>Ports these containers publish that no check covers. <strong>Watch</strong> adds a check that shows in
-        Argus when the port stops answering; <strong>Watch and alert me</strong> also sends an alert (a critical
-        check). Change or remove either later on the Checks page.</>}>
+      about={<>Ports these containers publish that no check covers. Argus knocks on each once to pick the check:
+        HTTP when it answers like a web app (it proves the app answers), TCP otherwise (it proves the port is open).
+        <strong> Watch</strong> shows a problem in Argus; <strong>Watch and alert me</strong> also sends an alert.
+        A good rule: alert for what you or others use, watch the rest. Change either later on the Checks page.</>}>
       {done && <p className="form-ok small" role="status">{done} <a href="#/">See it on Checks</a></p>}
-      <ul className="rows">{suggestions.map((g) => (
-        <li key={g.port}><span className="dot dot-unknown" />
-          <span className="row-main">{g.container} <span className="muted mono">:{g.port}</span>
-            <span className="row-sub muted mono">{g.check.target}</span></span>
-          <span className="row-note" />
-          <span className="row-act">{session?.signed_in && <>
-            <button className="btn btn-small" disabled={busy !== null} onClick={() => watch(g, false)}>Watch</button>
-            <button className="btn btn-small" disabled={busy !== null} onClick={() => watch(g, true)}>Watch and alert me</button>
-          </>}</span></li>
-      ))}</ul>
+      <ul className="rows">{apps.map(row)}</ul>
+      {plumbing.length > 0 && (
+        <details className="plumbing">
+          <summary className="small muted">Usually not worth watching ({plumbing.length}): exporters, brokers and other plumbing</summary>
+          <ul className="rows">{plumbing.map(row)}</ul>
+        </details>
+      )}
       {error && <p className="form-error" role="alert">{error}</p>}
     </Section>
   );

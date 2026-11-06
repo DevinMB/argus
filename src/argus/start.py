@@ -11,6 +11,8 @@ import ipaddress
 import re
 from urllib.parse import urlsplit
 
+from argus import sniff
+
 HIDDEN = "start.hidden"
 
 
@@ -41,9 +43,10 @@ def _name(container: str, port: int, taken: set[str]) -> str:
     return name
 
 
-def suggestions(companions: list[dict], checks) -> list[dict]:
+def suggestions(companions: list[dict], checks, sniffer: sniff.Sniffer | None = None) -> list[dict]:
     """Each published port on a host, as a ready-to-add check, with whether a
-    check already covers it."""
+    check already covers it. Apps first; plumbing (exporters, brokers) last,
+    marked internal. A port the sniffer saw answer HTTP gets an HTTP check."""
     probed = {p for c in checks if (p := _port_of(c))}
     inside = {(c.companion, p[1]) for c in checks if c.companion and (p := _port_of(c))}
     taken = {c.name for c in checks}
@@ -61,21 +64,27 @@ def suggestions(companions: list[dict], checks) -> list[dict]:
                     for host, p in probed)
                 name = _name(c["name"], port, taken)
                 taken.add(name)
+                check = {"name": name, "kind": "tcp",
+                         "target": f"{addr if from_argus else '127.0.0.1'}:{port}",
+                         "group": c.get("project") or h["name"],
+                         **({} if from_argus else {"companion": h["name"]})}
                 out.append({
                     "host": h["name"], "container": c["name"], "port": port,
                     "covered": covered,
-                    "check": {"name": name, "kind": "tcp",
-                              "target": f"{addr if from_argus else '127.0.0.1'}:{port}",
-                              "group": c.get("project") or h["name"],
-                              **({} if from_argus else {"companion": h["name"]})},
+                    "internal": sniff.internal(c["name"], c.get("image", "")),
+                    "check": sniff.shape(check, sniffer and sniffer.known(check["target"])),
                 })
-    return out
+    if sniffer is not None:
+        sniffer.kick([s["check"]["target"] for s in out
+                      if not s["covered"] and s["check"]["kind"] == "tcp"
+                      and not s["check"].get("companion")])
+    return sorted(out, key=lambda s: s["internal"])
 
 
 def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
          companions: list[dict], hidden: bool, patched: int = 0,
-         exported_at: float | None = None) -> dict:
-    sugg = suggestions(companions, rt.config.checks)
+         exported_at: float | None = None, sniffer: sniff.Sniffer | None = None) -> dict:
+    sugg = suggestions(companions, rt.config.checks, sniffer)
     reporting = [h for h in companions if h["status"] == "ok"]
     stacks = [s for v in deploy_views for s in v["stacks"]]
     deployed = [s for s in stacks if s["status"] == "deployed"]
