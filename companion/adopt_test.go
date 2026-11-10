@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -107,5 +108,39 @@ func TestInPlaceOnlyWhereThisHostAdoptedAndThePolicyAllows(t *testing.T) {
 	if r := d.Results(&DeployPlan{Stacks: []StackSpec{st}})[0]; r.Result != "refused" ||
 		!strings.Contains(r.Detail, "bind_roots") {
 		t.Fatalf("got %+v", r)
+	}
+}
+
+// The companion checks its own policy on files it collected, before Argus
+// commits them anywhere (stacks moved in were refused at their first deploy).
+func TestPrecheckSaysWhatThePolicyWouldRefuse(t *testing.T) {
+	d, f := newTestDeployer(t)
+	d.PolicyPath = filepath.Join(t.TempDir(), "policy.json")
+	_ = os.WriteFile(d.PolicyPath, []byte(`{"bind_roots": ["/srv"], "allowed_caps": ["CHOWN"]}`), 0o644)
+	_ = f
+	var stagedEnv string
+	d.compose = func(dir string, _ []string, _ ...string) (string, error) {
+		b, _ := os.ReadFile(filepath.Join(dir, ".env"))
+		stagedEnv = string(b)
+		return `{"services": {"web": {"cap_add": ["SYS_CHROOT"], "volumes": [
+			{"type": "bind", "source": "/home/ann/vault", "target": "/v"},
+			{"type": "bind", "source": "` + filepath.Join(dir, "data") + `", "target": "/d"},
+			{"type": "bind", "source": "/srv/x", "target": "/x"}]}}}`, nil
+	}
+	got := Collected{Project: "web", Dir: "/srv/web", Env: "A=1\n",
+		Files: map[string]string{"compose.yml": base64.StdEncoding.EncodeToString([]byte("services: {}\n"))}}
+	bad := d.precheck(got)
+	if !reflect.DeepEqual(bad, []string{"web: capability SYS_CHROOT", "web: a bind from /home/ann/vault"}) {
+		t.Fatalf("got %v", bad)
+	}
+	if stagedEnv != "A=1\n" {
+		t.Fatalf("the .env was not staged: %q", stagedEnv)
+	}
+	if d.precheck(Collected{Project: "web", Error: "no such project"}) != nil {
+		t.Fatal("nothing collected, nothing to check")
+	}
+	_ = os.WriteFile(d.PolicyPath, []byte(`{"bad": true}`), 0o644)
+	if bad := d.precheck(got); len(bad) != 1 || !strings.Contains(bad[0], "policy file is unreadable") {
+		t.Fatalf("got %v", bad)
 	}
 }

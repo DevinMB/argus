@@ -22,6 +22,9 @@ type Collected struct {
 	Files   map[string]string `json:"files,omitempty"` // base name -> base64
 	Env     string            `json:"env,omitempty"`
 	Error   string            `json:"error,omitempty"`
+	// What this host's policy would refuse in it, checked here before Argus
+	// commits it anywhere: the same check a deploy makes (Policy.Check).
+	Policy []string `json:"policy,omitempty"`
 }
 
 const maxAdoptFile = 512 * 1024
@@ -81,6 +84,44 @@ func collect(project string, containers []Container, moved func(dir string) stri
 		out.Error = err.Error()
 	}
 	return out
+}
+
+// precheck runs the policy check a deploy would, on files just collected, so
+// Argus can say what to allow before it commits the stack (a stack it moved in
+// was refused at its first deploy: a bind under /home, a capability). Nothing
+// is checked when Compose cannot resolve the files here: the deploy says why.
+func (d *Deployer) precheck(got Collected) []string {
+	if got.Error != "" || len(got.Files) == 0 {
+		return nil
+	}
+	p, err := loadPolicy(d.PolicyPath)
+	if err != nil {
+		return []string{"the policy file is unreadable: " + err.Error()}
+	}
+	if err := os.MkdirAll(d.StateDir, 0o700); err != nil {
+		return nil
+	}
+	stage, err := os.MkdirTemp(d.StateDir, ".precheck-")
+	if err != nil {
+		return nil
+	}
+	defer os.RemoveAll(stage)
+	files := map[string][]byte{}
+	for name, b64 := range got.Files {
+		b, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || filepath.Base(name) != name {
+			return nil
+		}
+		files[name] = b
+	}
+	if err := writeFiles(stage, files, got.Env); err != nil {
+		return nil
+	}
+	out, err := d.compose(stage, nil, "-p", got.Project, "config", "--format", "json")
+	if err != nil {
+		return nil
+	}
+	return p.Check([]byte(out), stage, got.Dir)
 }
 
 // readPlain opens a regular file without following a symlink at its last step.
