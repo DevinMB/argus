@@ -197,6 +197,7 @@ function WhatPages({ view, act, say }) {
     ["jobs", "A scheduled run fails or is overdue"],
     ["heartbeats", "A timer goes quiet"],
     ["companions", "Any host stops reporting, or a disk on it passes 95% (always alerts)"],
+    ["apps", "An app's fix for a critical or exploited flaw waits for you (a major update, or failing checks)"],
   ];
   return (
     <div className="panel">
