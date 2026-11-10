@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -14,9 +15,13 @@ import (
 // PatchGrant is Argus's go-ahead, in its signed reply: one run, this far.
 type PatchGrant struct {
 	Run      int    `json:"run"`
-	Level    string `json:"level"` // security or full
+	Level    string `json:"level"` // security, full or urgent
 	Reboot   bool   `json:"reboot"`
 	Snapshot bool   `json:"snapshot"`
+	// For an urgent run (design decision 22): the pending security updates that
+	// close an exploited or critical CVE. Only these are installed, and only the
+	// ones this host itself sees as pending security updates.
+	Packages []string `json:"packages,omitempty"`
 }
 
 // PatchState is what the report says about the newest run. It is kept on disk
@@ -222,7 +227,15 @@ func (p *Patcher) Start(g *PatchGrant) {
 	}
 
 	before := p.collector.pendingUpdates()
-	steps, err := updateSteps(g.Level, p.collector)
+	var urgent []string
+	if g.Level == "urgent" {
+		if urgent = pendingSecurity(before, g.Packages); len(urgent) == 0 {
+			s.State, s.Summary = "ok", "urgent security fixes: nothing left to install here"
+			p.save(s)
+			return
+		}
+	}
+	steps, err := updateSteps(g.Level, p.collector, urgent)
 	if err != nil {
 		fail(err.Error())
 		return
@@ -321,13 +334,44 @@ func pkgBusyProc(proc string) bool {
 	return false
 }
 
+var pkgName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}$`)
+
+// pendingSecurity is the part of an urgent grant this host agrees with: names
+// it reports as pending security updates itself. Argus names the packages, but
+// what gets installed is never more than the host's own list.
+func pendingSecurity(u *Updates, want []string) []string {
+	if u == nil {
+		return nil
+	}
+	mine := map[string]bool{}
+	for _, p := range u.Packages {
+		if p.Security && pkgName.MatchString(p.Name) {
+			mine[p.Name] = true
+		}
+	}
+	var out []string
+	for _, n := range want {
+		if mine[n] {
+			out = append(out, n)
+			delete(mine, n)
+		}
+	}
+	return out
+}
+
 // updateSteps are the commands for one run, by package manager and level.
-func updateSteps(level string, c *Collector) ([][]string, error) {
+// urgent is the checked package list of an urgent run (pendingSecurity).
+func updateSteps(level string, c *Collector, urgent []string) ([][]string, error) {
 	switch {
 	case has("apt-get"):
 		// Wait for the dpkg lock: a host's own daily apt job often holds it.
 		lock := []string{"-o", "DPkg::Lock::Timeout=300"}
 		steps := [][]string{append([]string{"apt-get", "update", "-q"}, lock...)}
+		if level == "urgent" {
+			return append(steps, append([]string{"apt-get", "-y", "-q", "-o", "DPkg::Lock::Timeout=300",
+				"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold",
+				"install", "--only-upgrade"}, urgent...)), nil
+		}
 		if level == "full" {
 			return append(steps, []string{"apt-get", "-y", "-q", "-o", "DPkg::Lock::Timeout=300",
 				"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "dist-upgrade"}), nil
@@ -347,11 +391,17 @@ func updateSteps(level string, c *Collector) ([][]string, error) {
 		return append(steps, append([]string{"apt-get", "-y", "-q", "-o", "DPkg::Lock::Timeout=300",
 			"-o", "Dpkg::Options::=--force-confold", "install", "--only-upgrade"}, pkgs...)), nil
 	case has("dnf"):
+		if level == "urgent" {
+			return [][]string{append([]string{"dnf", "-y", "upgrade"}, urgent...)}, nil
+		}
 		if level == "full" {
 			return [][]string{{"dnf", "-y", "upgrade"}}, nil
 		}
 		return [][]string{{"dnf", "-y", "upgrade", "--security"}}, nil
 	case has("apk"):
+		if level == "urgent" {
+			return nil, fmt.Errorf("Alpine does not say which updates are security fixes, so there is no urgent run here")
+		}
 		if level != "full" {
 			return nil, fmt.Errorf("Alpine has no security-only updates; this host needs a safety net that allows all updates")
 		}
@@ -373,7 +423,8 @@ func securityPackages(aptSim string) []string {
 }
 
 func summarize(level string, before, after *Updates) string {
-	what := map[string]string{"full": "all updates", "security": "security updates"}[level]
+	what := map[string]string{"full": "all updates", "security": "security updates",
+		"urgent": "urgent security fixes"}[level]
 	if before == nil || after == nil || before.Pending == nil || after.Pending == nil {
 		return what + " installed"
 	}

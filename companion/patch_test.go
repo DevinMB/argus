@@ -126,3 +126,44 @@ func TestAStaleRunningRecordDoesNotMakeTheCompanionBusy(t *testing.T) {
 		t.Fatal("a run in this process is busy")
 	}
 }
+
+// Design decision 22: an urgent run installs only the packages Argus named,
+// and of those only what this host itself reports as pending security updates.
+func TestAnUrgentRunInstallsOnlyItsOwnPendingSecurityPackages(t *testing.T) {
+	u := &Updates{Packages: []Package{
+		{Name: "openssl", Security: true}, {Name: "libssl3", Security: true},
+		{Name: "curl"}, {Name: "-oEvil=1", Security: true}}}
+	got := pendingSecurity(u, []string{"libssl3", "curl", "bash", "-oEvil=1", "openssl", "openssl"})
+	if !reflect.DeepEqual(got, []string{"libssl3", "openssl"}) {
+		t.Fatalf("got %v", got)
+	}
+	if pendingSecurity(nil, []string{"openssl"}) != nil {
+		t.Fatal("no list of its own: nothing to install")
+	}
+	n, z := 5, 3
+	if s := summarize("urgent", &Updates{Pending: &n}, &Updates{Pending: &z}); s != "urgent security fixes: 2 package(s) updated, 3 still pending" {
+		t.Fatal(s)
+	}
+	// Nothing of the grant is pending here any more: no command runs at all.
+	p, ran, _ := newTestPatcher(t, false)
+	p.Start(&PatchGrant{Run: 21, Level: "urgent", Packages: []string{"openssl"}})
+	if s := p.State(); s.State != "ok" || !strings.Contains(s.Summary, "nothing left") || len(*ran) != 0 {
+		t.Fatalf("got %+v, ran %v", s, *ran)
+	}
+	if !has("apt-get") {
+		return
+	}
+	p, ran, reboots := newTestPatcher(t, true)
+	p.collector.run = func(string, ...string) (string, int, error) {
+		return "Inst openssl [3.5.1-1] (3.5.4-1 Debian-Security:13/stable-security [amd64])\n" +
+			"Inst vim [9.1-1] (9.1-2 Debian-Security:13/stable-security [amd64])\n", 0, nil
+	}
+	p.Start(&PatchGrant{Run: 22, Level: "urgent", Packages: []string{"openssl", "nginx"}, Reboot: false})
+	last := (*ran)[len(*ran)-1]
+	if !strings.HasSuffix(last, "install --only-upgrade openssl") || strings.Contains(strings.Join(*ran, "\n"), "dist-upgrade") {
+		t.Fatalf("ran %v", *ran)
+	}
+	if s := p.State(); s.State != "ok" || !strings.Contains(s.Summary, "needs a reboot") || *reboots != 0 {
+		t.Fatalf("got %+v", s)
+	}
+}
