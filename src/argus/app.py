@@ -1666,8 +1666,10 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         stacks = r.config.github.stacks_repo if r.config.github else "the deploy repo"
         d, s = request.app.state.deploys, request.app.state.settings
         # (host, stack path) -> how that host's companion deployed it
-        status = {(v["companion"], st["path"]): st["status"]
-                  for v in d.views(r.companions.views()) for st in v["stacks"]}
+        views = d.views(r.companions.views())
+        each = [(v["companion"], st) for v in views for st in v["stacks"]]
+        status = {(h, st["path"]): st["status"] for h, st in each}
+        why = {(h, st["path"]): st.get("detail") or "" for h, st in each}
         out = []
         for t in gh.targets:
             state = gh.repos.get(t.name)
@@ -1676,7 +1678,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             placed = None
             if not t.repo.stack and not t.repo.deploy:
                 placed = [{**p, "status": {h: status.get((h, p["path"]), "pending")
-                                           for h in p["hosts"]}}
+                                           for h in p["hosts"]},
+                           "detail": {h: why.get((h, p["path"]), "") for h in p["hosts"]}}
                           for p in d.placements(t.owner, t.repo.name)] or None
             # argus.yml's check:, else the one named after the repo.
             linked = t.repo.check or github.check_for(t.repo.name, r.config.checks)

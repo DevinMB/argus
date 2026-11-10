@@ -111,6 +111,13 @@ def test_track_from_companions():
     new[0]["status"] = {"nas": "rolled_back"}
     steps = {s["key"]: s for s in track(state, None, {}, NOW, "ann/stacks", "", new)}
     assert steps["deployed"]["status"] == "failed"
+    assert steps["deployed"]["link"] == "#/hosts?host=nas&tab=deploys"
+    # The companion's reason, when it gave one, is in the step itself.
+    new[0]["status"] = {"nas": "refused"}
+    new[0]["detail"] = {"nas": "this host's policy refuses it: web: capability SYS_CHROOT"}
+    steps = {s["key"]: s for s in track(state, None, {}, NOW, "ann/stacks", "", new)}
+    assert steps["deployed"]["detail"] == ("Deploy failed on nas: this host's policy "
+                                           "refuses it: web: capability SYS_CHROOT")
     new[0]["status"] = {"nas": "deployed"}
     steps = {s["key"]: s for s in track(state, None, {}, NOW, "ann/stacks", "", new)}
     assert steps["deployed"]["status"] == "done"
