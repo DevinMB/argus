@@ -218,6 +218,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 				got := collect(name, report.Containers, deployer.handedBack)
 				if got.Error == "" {
 					deployer.markAdopted(got.Dir)
+					got.Policy = deployer.precheck(got)
 				}
 				collected = append(collected, got)
 			}

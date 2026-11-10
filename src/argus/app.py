@@ -331,6 +331,8 @@ class CollectedProject(BaseModel):
     files: dict[str, str] = Field({}, max_length=20)
     env: str = Field("", max_length=64 * 1024)
     error: str = Field("", max_length=500)
+    # What the host's policy would refuse in it (the companion's own check).
+    policy: list[Annotated[str, Field(max_length=500)]] = Field([], max_length=50)
 
 
 class LocalTime(BaseModel):

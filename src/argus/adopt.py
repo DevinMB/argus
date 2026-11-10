@@ -136,6 +136,7 @@ class Adoption:
         d = got["dir"]
         outside = roots and not any(d == r.rstrip("/") or d.startswith(r.rstrip("/") + "/")
                                     for r in roots)
+        refused = self._refused(name, got.get("policy") or [])
         if link:
             # Already in the repo: no commit, no token. Git's version is what deploys.
             snap = self.deploys.snapshot
@@ -143,6 +144,8 @@ class Adoption:
             differs = sorted(n for n, t in files.items() if in_git.get(n) not in (None, t))
             if outside:
                 blockers.append(self._outside(d, roots))
+            if refused:
+                blockers.append(refused)
             return {"state": "ready", "mode": "link", "path": path, "dir": d, "files": files,
                     "differs": differs, "secrets": sorted(env), "unreadable_env_lines": len(bad),
                     "blockers": [{"text": t, "href": h} for t, h in blockers]}
@@ -161,12 +164,39 @@ class Adoption:
                 "read the files again.", None))
         if outside:
             blockers.append(self._outside(d, roots))
+        if refused:
+            blockers.append(refused)
         snap = self.deploys.snapshot
         if snap and path in snap.stacks:
             blockers.append((f"{path} already exists in the deploy repo.", None))
         return {"state": "ready", "mode": "adopt", "path": path, "dir": d, "files": files,
                 "secrets": sorted(env), "unreadable_env_lines": len(bad),
                 "blockers": [{"text": t, "href": h} for t, h in blockers]}
+
+    @staticmethod
+    def _refused(host: str, refused: list[str]) -> tuple[str, None] | None:
+        """What the host's policy would refuse, and the line that allows each."""
+        if not refused:
+            return None
+        fixes = []
+        for r in refused:
+            what = r.partition(": ")[2] or r
+            if what.startswith("a bind from "):
+                fixes.append(f'"{what.removeprefix("a bind from ")}" to bind_roots')
+            elif what.startswith("capability "):
+                fixes.append(f'"{what.removeprefix("capability ")}" to allowed_caps')
+            elif what in ("privileged", "devices"):
+                fixes.append(f'"allow_{what}": true')
+            elif what == "the Docker socket":
+                fixes.append('"allow_docker_socket": true')
+            elif what.endswith(" of the host"):
+                fixes.append('"allow_host_namespaces": true')
+        fixes = list(dict.fromkeys(fixes))
+        how = (f" On {host}, add {', '.join(fixes)} in /etc/argus-companion/policy.json, "
+               "then read the files again." if fixes else
+               f" Change the stack, or {host}'s policy in /etc/argus-companion/policy.json, "
+               "then read the files again.")
+        return (f"{host}'s policy would refuse it: {'; '.join(refused)}." + how, None)
 
     @staticmethod
     def _outside(d: str, roots: list[str]) -> tuple[str, None]:

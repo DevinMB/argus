@@ -153,6 +153,28 @@ def test_what_blocks_an_adoption_says_how_to_fix_it(env):
     assert r.status_code == 409 and fake.commits == []
 
 
+def test_what_the_hosts_policy_would_refuse_blocks_it_before_any_commit(env):
+    # Moved in, then refused at the first deploy (vault-mcp, deals-scanner,
+    # sassy-routes on the fresh install, 2026-11-10): now the companion checks
+    # its policy on the files it collected, and the preview says what to allow.
+    c, csrf, tok, fake = env
+    report(c, tok)
+    c.post("/api/adopt/nas/media/read", headers=csrf)
+    got = collected()
+    got[0]["policy"] = ["web: a bind from /home/ann/vault", "web: capability SYS_CHROOT",
+                        "db: privileged", "web: security_opt seccomp=unconfined"]
+    report(c, tok, collected=got)
+    pv = c.get("/api/adopt/nas/media", headers=csrf).json()
+    (b,) = pv["blockers"]
+    assert b["text"] == (
+        "nas's policy would refuse it: web: a bind from /home/ann/vault; web: capability "
+        "SYS_CHROOT; db: privileged; web: security_opt seccomp=unconfined. On nas, add "
+        '"/home/ann/vault" to bind_roots, "SYS_CHROOT" to allowed_caps, "allow_privileged": '
+        "true in /etc/argus-companion/policy.json, then read the files again.")
+    assert c.post("/api/adopt/nas/media", headers=csrf).status_code == 409
+    assert fake.commits == []
+
+
 def test_monitoring_only_hosts_and_strangers_get_nothing(env):
     c, csrf, tok, fake = env
     assert c.post("/api/adopt/nas/nothere/read", headers=csrf).status_code == 404
