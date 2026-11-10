@@ -44,7 +44,7 @@ docker compose logs argus | grep "Setup code"
 | CPU | 1 core | a share of one (it idles near 0%) |
 | Memory | 512 MB | 256 MB |
 | Disk | 1 GB | about 300 MB for the image, plus its data |
-| Architecture | amd64 (x86-64) | |
+| Architecture | amd64 (x86-64) or arm64 (a Raspberry Pi 4 or 5) | |
 
 Measured on a homelab with 18 hosts, 32 checks and about 40 GitHub repos: 150 MB of memory, 0.1% of a core, and 4.4 MB of data after a day. Data grows slowly with check history and patch logs. A small VM or LXC container with 1 core, 1 GB of memory and 4 GB of disk runs Argus with room for Docker itself.
 
