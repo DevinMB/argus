@@ -222,6 +222,17 @@ jobs:
       # Only in the published repo (forks build but do not push), and only what
       # passed every step above. main: sha-<7> and :edge. A release: 1.2.3, 1.2
       # and 1, which is what people run, plus sha-<7>.
+      - name: Set up QEMU and Buildx, for the arm64 image
+        if: >-
+          github.repository == 'DevinMB/argus'
+          && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - if: >-
+          github.repository == 'DevinMB/argus'
+          && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Push to GHCR
         if: >-
           github.repository == 'DevinMB/argus'
@@ -239,8 +250,14 @@ jobs:
             tags="$tags $VERSION ${VERSION%.*} ${VERSION%%.*}"
           fi
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          for t in $tags; do docker tag argus:ci "$IMAGE:$t"; docker push -q "$IMAGE:$t"; done
-          echo "### Pushed $IMAGE: $tags" >> "$GITHUB_STEP_SUMMARY"
+          # One image for amd64 and arm64 (a Raspberry Pi 4 or 5). The amd64 one is
+          # the image tested above, rebuilt from the same files; arm64 builds under
+          # QEMU, and its build checks that every Python package imports.
+          args=""
+          for t in $tags; do args="$args -t $IMAGE:$t"; done
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
+            --build-arg COMMIT="$GITHUB_SHA" --build-arg VERSION="$VERSION" $args .
+          echo "### Pushed $IMAGE (amd64, arm64): $tags" >> "$GITHUB_STEP_SUMMARY"
 
   # A release's notes, from the pull requests merged since the last one. Only
   # after its images are pushed, so a release never names an image that is missing.

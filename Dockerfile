@@ -1,5 +1,7 @@
 # The read-only UI: built and unit-tested here, shipped as static files only.
-FROM node:26.12.1-alpine AS ui
+# The UI and the companion build on the build machine's own architecture (their
+# output is the same for every image); only the last stage is per platform.
+FROM --platform=$BUILDPLATFORM node:26.12.1-alpine AS ui
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ui/.npmrc ./
 RUN npm ci --no-audit --no-fund
@@ -8,7 +10,7 @@ RUN npm test && npm run build
 
 # The companion: tested here, built for both architectures, served by Argus to
 # the hosts it enrolls. Static binaries, standard library only.
-FROM golang:1.27.3-alpine AS companion
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS companion
 WORKDIR /src
 COPY companion/ ./
 ARG COMMIT=unknown
