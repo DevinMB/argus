@@ -298,6 +298,8 @@ class Updates(BaseModel):
     pending: int | None = Field(None, ge=0)
     security: int | None = Field(None, ge=0)
     packages: list[Package] = Field([], max_length=300)
+    # Held back by Ubuntu's phased rollout: not this host's turn yet, not counted.
+    phased: list[Annotated[str, Field(max_length=200)]] = Field([], max_length=300)
     manager: str = Field("", max_length=20)
     checked_at: float | None = None
     error: str = Field("", max_length=300)

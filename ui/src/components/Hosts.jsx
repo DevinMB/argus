@@ -1275,6 +1275,13 @@ function Overview({ host, suggestions, session, reload, updateCommand, hosts }) 
               : `Up to date (${r.updates.manager}).`)}
             {r.reboot_required && <span className="st-failing"> Needs a reboot.</span>}
           </p>
+          {r.updates?.phased?.length > 0 && (
+            <p className="small muted">
+              {r.updates.phased.length} more {r.updates.phased.length === 1 ? "is" : "are"} held back by Ubuntu's phased rollout
+              (<span className="mono">{r.updates.phased.slice(0, 6).join(", ")}{r.updates.phased.length > 6 ? ", …" : ""}</span>):
+              Ubuntu releases some updates to a growing share of machines, and apt installs {r.updates.phased.length === 1 ? "it" : "them"} here when this host's turn comes. Nothing to do.
+            </p>
+          )}
           {r.updates?.packages?.length > 0 && <PackageList packages={r.updates.packages} os={r.os} pending={r.updates.pending} urgent={host.patching?.urgent?.pending} />}
         </Section>
       )}

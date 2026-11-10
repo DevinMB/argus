@@ -167,3 +167,43 @@ func TestAnUrgentRunInstallsOnlyItsOwnPendingSecurityPackages(t *testing.T) {
 		t.Fatalf("got %+v", s)
 	}
 }
+
+// Ubuntu's phased updates: apt names what it holds back; they are not pending.
+func TestPhasedUpdatesAreHeldBackNotPending(t *testing.T) {
+	sim := `Reading package lists...
+Calculating upgrade...
+The following upgrades have been deferred due to phasing:
+  distro-info python3-distro-info
+  snapd
+The following packages will be upgraded:
+  curl
+Inst curl [8.5.0-2ubuntu10.6] (8.5.0-2ubuntu10.7 Ubuntu:24.04/noble-updates [amd64])
+Conf curl (8.5.0-2ubuntu10.7 Ubuntu:24.04/noble-updates [amd64])`
+	if got := parseAptPhased(sim); !reflect.DeepEqual(got, []string{"distro-info", "python3-distro-info", "snapd"}) {
+		t.Fatalf("got %v", got)
+	}
+	if n, _ := parseAptSim(sim); n != 1 {
+		t.Fatalf("pending %d", n)
+	}
+	if parseAptPhased("Inst curl [1] (2 Ubuntu [amd64])") != nil {
+		t.Fatal("nothing is phased here")
+	}
+	// In its sandbox the companion asks in the host's mount namespace, and falls
+	// back to asking where it is when that fails.
+	c := newCollector()
+	var asked []string
+	c.hostMounts = true
+	c.run = func(name string, args ...string) (string, int, error) {
+		asked = append(asked, name)
+		if name == "nsenter" {
+			if got := strings.Join(args, " "); got != "--target 1 --mount -- apt-get -s -o Debug::NoLocking=true dist-upgrade" {
+				t.Fatalf("nsenter %s", got)
+			}
+			return "", 1, nil
+		}
+		return "ok", 0, nil
+	}
+	if out, _, _ := c.aptSim("dist-upgrade"); out != "ok" || !reflect.DeepEqual(asked, []string{"nsenter", "apt-get"}) {
+		t.Fatalf("out %q asked %v", out, asked)
+	}
+}
