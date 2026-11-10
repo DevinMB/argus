@@ -216,3 +216,53 @@ def test_lookups_ask_only_about_pending_cves_and_keep_what_they_knew(tmp_path, c
             assert again.why("CVE-2027-0003") == "critical"
 
     asyncio.run(go())
+
+
+# --- apps: a critical fix that will not arrive on its own ---
+
+def app_state(alerts, updates):
+    return {"alerts": alerts, "updates": [
+        {"number": n, "title": t, "url": f"https://github.com/ann/shop/pull/{n}",
+         "ci": ci, "waits_for_you": waits} for n, t, ci, waits in updates]}
+
+
+def alert(package, severity, cve=""):
+    return {"package": package, "severity": severity, "cve": cve,
+            "summary": f"{package} lets strangers in", "url": "https://github.com/a"}
+
+
+def test_an_apps_critical_fix_that_is_a_major_update_reaches_the_owner(env):
+    from types import SimpleNamespace
+
+    from argus.github import stuck_fixes
+
+    c, csrf, rt, clock = env
+    state = app_state(
+        [alert("next", "critical", "CVE-2027-0100"), alert("lodash", "high", "CVE-2027-0101"),
+         alert("express", "critical"), alert("pg", "critical"), alert("ws", "high", "CVE-2027-9")],
+        [(12, "Bump next from 14.2.3 to 15.0.1", "success", True),      # a major: waits
+         (13, "Bump lodash from 4.17.20 to 5.0.0", "success", True),    # high: not urgent
+         (14, "Bump express from 4.19.0 to 4.19.2", "running", False),  # merges by itself
+         (15, "Bump pg from 8.11.0 to 8.11.5", "failure", False),       # stuck: failing
+         (16, "Bump ws from 8.17.0 to 9.0.0", "success", True),         # exploited below
+         (17, "Bump next-auth from 4.0.0 to 5.0.0", "success", True)])  # not "next"
+    got = stuck_fixes(state, lambda cve: cve == "CVE-2027-9")
+    assert [(f["package"], f["hot"], f["why"], f["pr"]) for f in got] == [
+        ("next", "critical", "waits", 12), ("pg", "critical", "failing", 15),
+        ("ws", "exploited", "waits", 16)]
+    assert stuck_fixes({"alerts": None, "updates": []}) == []  # alerts not readable
+    # The alerter says it, once per app and package.
+    al = c.app.state.alerter
+    al.gh = SimpleNamespace(repos={"shop": state})
+    c.app.state.urgent.exploited = {"CVE-2027-9"}
+    p = al.problems()
+    assert p["app-fix:shop:next"].title == "shop has a security fix waiting for you"
+    assert p["app-fix:shop:next"].detail == (
+        "next has a critical flaw (CVE-2027-0100). Its fix, PR #12, is a major update, "
+        "which Argus leaves to you.")
+    assert "fails its checks" in p["app-fix:shop:pg"].detail
+    assert "being exploited" in p["app-fix:shop:ws"].detail
+    assert "app-fix:shop:lodash" not in p and "app-fix:shop:express" not in p
+    # The owner can turn the rule off.
+    assert c.put("/api/alerts", headers=csrf, json={"rules": {"apps": False}}).status_code == 200
+    assert not any(k.startswith("app-fix") for k in al.problems())
