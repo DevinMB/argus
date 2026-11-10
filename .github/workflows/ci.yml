@@ -1,0 +1,301 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]       # a release (decision 21); release.yml makes the tag
+  workflow_dispatch:   # the gate and release.yml start builds this way
+# Actions are pinned to commit SHAs: tags can be moved or deleted (trivy-action's were).
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.14" }
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -q
+
+  image:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write   # push to GHCR on main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          # A release tag (v1.2.3) names the version; every other build is "dev".
+          version=dev
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version=${GITHUB_REF_NAME#v}; fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          docker build -t argus:ci --build-arg COMMIT="$COMMIT" --build-arg VERSION="$version" .
+      - name: Trivy (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: argus:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Smoke test
+        run: |
+          mkdir -p cfg && printf 'checks:\n  - {name: self, kind: tcp, target: "127.0.0.1:8080", interval: 10}\nheartbeats:\n  - {name: runner-backup, max_age: 86400}\n' > cfg/argus.yml
+          # A deploy repo as a folder: the runner (enrolled below) runs one stack.
+          mkdir -p deploy/hosts deploy/sites/ci/hello && echo sites/ci/hello > deploy/hosts/runner
+          cat > deploy/sites/ci/hello/compose.yml <<'EOF'
+          services:
+            hello:
+              image: busybox:1.37
+              command: ["sh", "-c", "echo \"$$GREETING\" > /www/index.html && httpd -f -p 8099 -h /www"]
+              environment: {GREETING: "${GREETING}"}
+              tmpfs: [/www]
+              ports: ["8099:8099"]
+              healthcheck: {test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8099/"], interval: 2s, retries: 10}
+          EOF
+          docker run -d --name argus -p 8080:8080 -v "$PWD/cfg:/config:ro" -v "$PWD/deploy:/deploy:ro" \
+            -e ARGUS_DEPLOY_DIR=/deploy -e ARGUS_DB=/tmp/argus.db argus:ci
+          for _ in $(seq 30); do curl -skf https://localhost:8080/healthz && break; sleep 1; done
+          sleep 12
+          curl -skf https://localhost:8080/metrics | grep 'argus_check_up{check="self"' | grep ' 1.0$'
+          curl -skf https://localhost:8080/ | grep -q '<title>Argus</title>'
+          curl -skfI https://localhost:8080/ | grep -qi "content-security-policy: default-src 'self'"
+          # Fresh install: a setup code in the log, settings closed without a session.
+          docker logs argus 2>&1 | grep -q 'Setup code: '
+          test "$(curl -sk -o /dev/null -w '%{http_code}' -X PUT https://localhost:8080/api/alerts)" = 401
+          docker exec argus python -m argus healthcheck
+          docker logs argus 2>&1 | grep -v 'Setup code'
+      - name: Starts with no config at all, over plain HTTP when told
+        run: |
+          docker run -d --name bare -p 8081:8080 -e ARGUS_TLS=off -e ARGUS_DB=/tmp/argus.db argus:ci
+          for _ in $(seq 30); do curl -sf localhost:8081/healthz && break; sleep 1; done
+          curl -sf localhost:8081/api/info | grep -q '"sender":"argus"'
+          docker exec bare python -m argus healthcheck
+      - name: A host added with one command shows its containers and disks
+        run: |
+          # The admin: the setup code from the log, then "Add a host" as the UI does it.
+          code=$(docker logs argus 2>&1 | grep -o 'Setup code: [0-9a-f-]*' | tail -1 | cut -d' ' -f3)
+          csrf=$(curl -sk -c jar -H 'content-type: application/json' \
+            -d "{\"code\":\"$code\",\"password\":\"ci password for the smoke test\"}" \
+            https://localhost:8080/api/setup | jq -r .csrf)
+          cmd=$(curl -sk -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' \
+            -d '{"url":"https://localhost:8080","name":"runner"}' \
+            https://localhost:8080/api/companions/codes | jq -r .command)
+          echo "$cmd" | grep -q -- '--pinnedpubkey sha256//'
+          # The one command, exactly as shown, on this runner (it has Docker and systemd).
+          sh -c "$cmd"
+          for _ in $(seq 30); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].status == "ok"' hosts.json >/dev/null && break; sleep 2
+          done
+          if ! jq -e '.companions[0].status == "ok"' hosts.json >/dev/null; then
+            cat hosts.json; sudo journalctl -u argus-companion --no-pager | tail -30
+            sudo /usr/local/bin/argus-companion report | head -c 3000; exit 1
+          fi
+          jq '.companions[0] | {name, status, containers: [.report.containers[].name], disks: [.report.disks[].mount]}' hosts.json
+          jq -e '.companions[0].report.containers | map(.name) | index("argus")' hosts.json
+          jq -e '.companions[0].report.disks | map(.mount) | index("/")' hosts.json
+          systemctl is-active argus-companion
+
+          # Deploys: a secret set in Argus reaches the stack's .env on the host.
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' -X PUT \
+            -d '{"path":"sites/ci/hello","env":{"GREETING":"hello from argus"}}' \
+            https://localhost:8080/api/deploys/secrets
+          for _ in $(seq 60); do
+            curl -s localhost:8099/ | grep -q 'hello from argus' && break; sleep 3
+          done
+          curl -s localhost:8099/ | grep 'hello from argus'
+          sudo stat -c '%a' /var/lib/argus-companion/stacks/hello/.env | grep -qx 600
+          for _ in $(seq 30); do
+            curl -sk https://localhost:8080/api/companions | jq -e '.companions[0].stacks[0].status == "deployed"' && break; sleep 3
+          done
+          # The host's policy refuses a privileged stack before anything changes.
+          sed -i 's/^  hello:$/  hello:\n    privileged: true/' deploy/sites/ci/hello/compose.yml
+          grep -q 'privileged: true' deploy/sites/ci/hello/compose.yml
+          for _ in $(seq 60); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].stacks[0].status == "refused"' hosts.json >/dev/null && break; sleep 3
+          done
+          jq '.companions[0].stacks[0] | {status, detail}' hosts.json
+          jq -e '.companions[0].stacks[0].detail | contains("privileged")' hosts.json
+          curl -s localhost:8099/ | grep -q 'hello from argus'  # the running stack is untouched
+
+          # Migration day, rehearsed: a stack started the old way (a plain compose up in
+          # its own folder, data beside it, an .env) that the deploy repo also lists is
+          # held back, then linked: same container, same data, nothing restarted.
+          sudo mkdir -p /opt/legacy/hello2/data
+          echo kept | sudo tee /opt/legacy/hello2/data/keep.txt >/dev/null
+          echo "GREETING=old" | sudo tee /opt/legacy/hello2/.env >/dev/null
+          printf '%s\n' 'services:' '  web:' '    image: busybox:1.37' \
+            '    command: ["httpd", "-f", "-p", "8098", "-h", "/www"]' \
+            '    environment: {GREETING: "${GREETING}"}' '    volumes: ["./data:/www:ro"]' \
+            '    ports: ["8098:8098"]' \
+            '    healthcheck: {test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8098/keep.txt"], interval: 2s, retries: 10}' \
+            | sudo tee /opt/legacy/hello2/compose.yml >/dev/null
+          sudo docker compose --project-directory /opt/legacy/hello2 -p hello2 up -d --wait
+          before=$(docker inspect -f '{{.Id}}' hello2-web-1)
+          mkdir -p deploy/sites/ci/hello2 && cp /opt/legacy/hello2/compose.yml deploy/sites/ci/hello2/
+          echo sites/ci/hello2 >> deploy/hosts/runner
+          for _ in $(seq 60); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "link"' hosts.json >/dev/null && break; sleep 3
+          done
+          jq '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | {status, held}' hosts.json
+          jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .held == "/opt/legacy/hello2"' hosts.json
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/adopt/runner/hello2/read
+          for _ in $(seq 40); do
+            curl -skf -b jar https://localhost:8080/api/adopt/runner/hello2 > pv.json
+            jq -e '.state == "ready"' pv.json >/dev/null && break; sleep 3
+          done
+          jq '{state, mode, path, dir, secrets, blockers}' pv.json
+          jq -e '.mode == "link" and .blockers == [] and .secrets == ["GREETING"]' pv.json
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/adopt/runner/hello2
+          for _ in $(seq 60); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "deployed"' hosts.json >/dev/null && break; sleep 3
+          done
+          jq '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | {status, detail}' hosts.json
+          jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "deployed"' hosts.json
+          grep ReadWritePaths /etc/systemd/system/argus-companion.service
+          test "$(docker inspect -f '{{.Id}}' hello2-web-1)" = "$before"  # not recreated
+          curl -sf localhost:8098/keep.txt | grep -qx kept                # its data, in place
+          sudo grep -q "GREETING='old'" /opt/legacy/hello2/.env           # its .env, now from Argus
+
+          # Patching: no backup, no patching; with a recent one, "Patch now" runs
+          # security updates (no reboot, as chosen) in a transient unit, outside the
+          # companion's sandbox, and reports how it went.
+          test "$(curl -sk -o /dev/null -w '%{http_code}' -b jar -H "X-CSRF-Token: $csrf" -X POST \
+            https://localhost:8080/api/patching/runner/now)" = 409
+          curl -skf -X POST https://localhost:8080/heartbeat/runner-backup
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' -X PUT \
+            -d '{"enabled":false,"day":1,"time":"03:00","level":"security","reboot":false,"backup":"heartbeat:runner-backup"}' \
+            https://localhost:8080/api/patching/runner
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/patching/runner/now
+          for _ in $(seq 120); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[0].patching.runs[0].result | IN("ok", "failed")' hosts.json >/dev/null && break; sleep 5
+          done
+          jq '.companions[0].patching.runs[0] | {result, level, reboot, summary}' hosts.json
+          jq -e '.companions[0].patching.runs[0] | .result == "ok" and .level == "security" and .reboot == 0' hosts.json \
+            || { jq -r '.companions[0].patching.runs[0].log' hosts.json | tail -60; exit 1; }
+          curl -s localhost:8099/ | grep -q 'hello from argus'  # still serving after patching
+          # Self-update: a companion that differs from the build Argus serves replaces
+          # itself (outside its sandbox) and restarts, with no install command re-run.
+          served=$(docker exec argus sha256sum /app/companion/argus-companion-linux-amd64 | cut -d' ' -f1)
+          # A running binary cannot be written in place: swap in an altered copy.
+          sudo sh -c 'cp /usr/local/bin/argus-companion /tmp/stale && echo stale >> /tmp/stale && mv /tmp/stale /usr/local/bin/argus-companion'
+          test "$(sha256sum /usr/local/bin/argus-companion | cut -d' ' -f1)" != "$served"
+          sudo systemctl restart argus-companion
+          for _ in $(seq 40); do
+            [ "$(sha256sum /usr/local/bin/argus-companion | cut -d' ' -f1)" = "$served" ] && break; sleep 3
+          done
+          sudo journalctl -u argus-companion --no-pager | grep -E 'updated|update failed' | tail -3
+          test "$(sha256sum /usr/local/bin/argus-companion | cut -d' ' -f1)" = "$served"
+          for _ in $(seq 20); do systemctl is-active -q argus-companion && break; sleep 2; done
+          systemctl is-active argus-companion
+          # Removing the host revokes its token: the companion says so in its log.
+          id=$(jq -r '.companions[0].id' hosts.json)
+          curl -skf -b jar -H "X-CSRF-Token: $csrf" -X DELETE https://localhost:8080/api/companions/$id
+          sudo /usr/local/bin/argus-companion run --once 2>&1 | grep -q 'HTTP 401'
+
+          # Alpine, as root with no sudo (a Proxmox container, say): the same command
+          # without sudo installs an OpenRC service, and the host reports.
+          cmd=$(curl -sk -b jar -H "X-CSRF-Token: $csrf" -H 'content-type: application/json' \
+            -d '{"url":"https://localhost:8080","name":"alpine"}' \
+            https://localhost:8080/api/companions/codes | jq -r .command)
+          docker run -d --name alpine --network host alpine:3.22 sleep infinity
+          docker exec alpine sh -c 'apk add -q curl openrc && mkdir -p /run/openrc && touch /run/openrc/softlevel'
+          docker exec alpine sh -c "${cmd/| sudo sh/| sh}"
+          for _ in $(seq 30); do
+            curl -sk https://localhost:8080/api/companions > hosts.json
+            jq -e '.companions[] | select(.name == "alpine") | .status == "ok"' hosts.json >/dev/null && break; sleep 2
+          done
+          jq -e '.companions[] | select(.name == "alpine") | .status == "ok" and .report.updates.manager == "apk"' hosts.json \
+            || { docker exec alpine rc-service argus-companion status; jq '.companions' hosts.json; exit 1; }
+          docker exec alpine rc-service argus-companion status
+      # Only in the published repo (forks build but do not push), and only what
+      # passed every step above. main: sha-<7> and :edge. A release: 1.2.3, 1.2
+      # and 1, which is what people run, plus sha-<7>.
+      - name: Push to GHCR
+        if: >-
+          github.repository == 'DevinMB/argus'
+          && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/devinmb/argus
+        run: |
+          set -eu
+          tags="sha-${GITHUB_SHA::7}"
+          if [ "$VERSION" = dev ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] && tags="$tags edge"
+          else
+            tags="$tags $VERSION ${VERSION%.*} ${VERSION%%.*}"
+          fi
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in $tags; do docker tag argus:ci "$IMAGE:$t"; docker push -q "$IMAGE:$t"; done
+          echo "### Pushed $IMAGE: $tags" >> "$GITHUB_STEP_SUMMARY"
+
+  # A release's notes, from the pull requests merged since the last one. Only
+  # after its images are pushed, so a release never names an image that is missing.
+  release:
+    needs: image
+    if: >-
+      github.repository == 'DevinMB/argus' && startsWith(github.ref, 'refs/tags/v')
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+
+  # The Dependabot gate, after everything above passes: patch and minor updates
+  # merge, then ci.yml runs on main (a merge made with GITHUB_TOKEN starts no
+  # push workflow; dispatch is the documented exception). Majors get the
+  # waits-for-you label and wait for a person.
+  gate:
+    needs: [test, image]
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Merge patch and minor updates, then build main
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          UPDATE: ${{ steps.meta.outputs.update-type }}
+        run: |
+          set -eu
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --merge --delete-branch
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
+          # A dependency update people should get: a patch release (decision 21).
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f bump=patch
+          echo "### Merged #$PR ($UPDATE) and started the main build" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Majors wait for you
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh label create waits-for-you --repo "$GITHUB_REPOSITORY" --color FBCA04 \
+            --description "A major update: merge it after a look" 2>/dev/null || true
+          gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label waits-for-you
