@@ -329,7 +329,7 @@ export default function App() {
           )}
 
           {session?.signed_in && editable && (wmOpen || !checks.length || (data.start?.suggestions ?? []).length > 0) && (
-            <WatchMore suggestions={data.start?.suggestions ?? []} session={session} sites={sites}
+            <WatchMore suggestions={data.start?.suggestions ?? []} dismissed={data.start?.dismissed ?? []} session={session} sites={sites}
                        groups={groupChecks(checks).map(([g]) => g)}
                        hosts={(data.companions?.companions ?? []).map((h) => h.name)}
                        tab={wmTab} onTab={setWmTab} onAdded={(msg) => { setSaved(msg); reload(); }} />

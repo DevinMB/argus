@@ -44,10 +44,17 @@ def _name(container: str, port: int, taken: set[str]) -> str:
     return name
 
 
+def dismiss_key(container: str, port: int) -> str:
+    """How a suggestion marked not needed is kept in its host's ignored list."""
+    return f"port:{container}:{port}"
+
+
 def suggestions(companions: list[dict], checks, sniffer: sniff.Sniffer | None = None) -> list[dict]:
     """Each published port on a host, as a ready-to-add check, with whether a
     check already covers it. Apps first; plumbing (exporters, brokers) last,
-    marked internal. A port the sniffer saw answer HTTP gets an HTTP check."""
+    marked internal. A port the sniffer saw answer HTTP gets an HTTP check. One
+    the owner marked not needed (the host's ignored list, "port:<container>:<port>")
+    comes back with dismissed set, so the page can leave it out and offer it again."""
     probed = {p for c in checks if (p := _port_of(c))}
     inside = {(c.companion, p[1]) for c in checks if c.companion and (p := _port_of(c))}
     taken = {c.name for c in checks}
@@ -71,9 +78,11 @@ def suggestions(companions: list[dict], checks, sniffer: sniff.Sniffer | None = 
                          "target": f"{addr if outside else '127.0.0.1'}:{port}",
                          "group": c.get("project") or h["name"],
                          **({} if outside else {"companion": h["name"]})}
+                key = dismiss_key(c["name"], port)
                 out.append({
-                    "host": h["name"], "container": c["name"], "port": port,
-                    "covered": covered,
+                    "host": h["name"], "host_id": h.get("id", ""), "key": key,
+                    "dismissed": key in (h.get("ignored") or []), "container": c["name"],
+                    "port": port, "covered": covered,
                     "internal": sniff.internal(c["name"], c.get("image", "")),
                     "check": sniff.shape(check, sniffer and sniffer.known(check["target"])),
                 })
@@ -86,13 +95,16 @@ def suggestions(companions: list[dict], checks, sniffer: sniff.Sniffer | None = 
         covered = (addr, 8006) in probed
         name = _name(f"pve-{h['name']}", 8006, taken)
         taken.add(name)
-        out.append({"host": h["name"], "container": "Proxmox web UI", "port": 8006,
+        key = dismiss_key("Proxmox web UI", 8006)
+        out.append({"host": h["name"], "host_id": h.get("id", ""), "key": key,
+                    "dismissed": key in (h.get("ignored") or []),
+                    "container": "Proxmox web UI", "port": 8006,
                     "covered": covered, "internal": False,
                     "check": {"name": name, "kind": "http", "target": f"https://{addr}:8006/",
                               "group": "infrastructure", "verify_tls": False}})
     if sniffer is not None:
         sniffer.kick([s["check"]["target"] for s in out
-                      if not s["covered"] and s["check"]["kind"] == "tcp"
+                      if not s["covered"] and not s["dismissed"] and s["check"]["kind"] == "tcp"
                       and not s["check"].get("companion")])
     return sorted(out, key=lambda s: s["internal"])
 
@@ -123,7 +135,7 @@ def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
          "title": "Watch what matters",
          "why": "A check notices when a service stops answering, even when its host looks fine.",
          "href": "#", "action": "Add a check",
-         "suggest": sum(1 for s in sugg if not s["covered"])},
+         "suggest": sum(1 for s in sugg if not s["covered"] and not s["dismissed"])},
         {"key": "patching", "done": patched > 0,
          "title": "Keep it patched",
          "why": "Link a host's backup and pick a weekly window; Argus patches one host "
@@ -146,14 +158,17 @@ def view(*, rt, alerts: dict, gh_connected: bool, deploy_views: list[dict],
     # not bring the setup bar back. Health has its own pages.
     for st in steps:
         st["done"] = st["done"] or st["key"] in (seen or set())
-    services = sugg
+    # Marked not needed: out of the suggestions and out of the count, still listed
+    # so the page can bring one back.
+    services = [s for s in sugg if not s["dismissed"]]
     return {
         "hidden": hidden,
         # Argus's own data: a warning on the home page until an export is taken.
         "exported_at": exported_at,
         "steps": steps,
         "done": sum(s["done"] for s in steps),
-        "suggestions": [s for s in sugg if not s["covered"]],
+        "suggestions": [s for s in services if not s["covered"]],
+        "dismissed": [s for s in sugg if s["dismissed"] and not s["covered"]],
         "coverage": {
             "services": len(services), "watched": sum(s["covered"] for s in services),
             "hosts": len(companions), "reporting": len(reporting), "patched": patched,

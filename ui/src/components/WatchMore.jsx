@@ -18,17 +18,57 @@ function Choice({ value, onChange, label }) {
   );
 }
 
-function SuggestedRow({ g, value, onChange }) {
+function SuggestedRow({ g, value, onChange, onDismiss, busy }) {
   return (
     <li>
       <span className="row-main">{g.container} <span className="muted mono">:{g.port}</span>
         <span className="row-sub muted"><span className="kind">{g.check.kind.toUpperCase()}</span> <span className="mono">{g.check.target}</span></span></span>
-      <span className="row-act"><Choice value={value} onChange={onChange} label={`${g.container} :${g.port}`} /></span>
+      <span className="row-act">
+        <Choice value={value} onChange={onChange} label={`${g.container} :${g.port}`} />
+        {onDismiss && <button type="button" className="btn btn-small btn-quiet" disabled={busy} onClick={onDismiss}
+                              aria-label={`${g.container} :${g.port} is not needed`}>Not needed</button>}
+      </span>
     </li>
   );
 }
 
-function Suggested({ suggestions, session, fleet, onAdded, onTab }) {
+// Marking a suggestion not needed keeps it in its host's ignored list (see
+// start.dismiss_key on the server); bringing it back removes it.
+async function mark(gs, ignored, csrf) {
+  for (const g of gs) {
+    await send("PUT", `/api/companions/${g.host_id}/ignored`, { container: g.key, ignored }, csrf);
+  }
+}
+
+function Dismissed({ dismissed, session, onAdded }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  if (!dismissed.length || !session?.signed_in) return null;
+  const back = async (gs) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await mark(gs, false, session.csrf);
+      onAdded(`${gs.length === 1 ? `${gs[0].container} :${gs[0].port} is` : `${gs.length} services are`} suggested again.`);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  return (
+    <details className="plumbing">
+      <summary className="small muted">Marked not needed ({dismissed.length})</summary>
+      <ul className="rows">{dismissed.map((g) => (
+        <li key={`${g.host}/${g.key}`}>
+          <span className="row-main">{g.container} <span className="muted mono">:{g.port}</span>
+            <span className="row-sub muted">{g.host}</span></span>
+          <span className="row-act"><button type="button" className="btn btn-small" disabled={busy} onClick={() => back([g])}>Suggest again</button></span>
+        </li>
+      ))}</ul>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </details>
+  );
+}
+
+function Suggested({ suggestions, dismissed, session, fleet, onAdded, onTab }) {
   const [pick, setPick] = useState({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -50,9 +90,27 @@ function Suggested({ suggestions, session, fleet, onAdded, onTab }) {
     }
     setBusy(false);
   };
+  const dismiss = async (gs) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await mark(gs, true, session.csrf);
+      setPick({});
+      onAdded(`${gs.length === 1 ? `${gs[0].container} :${gs[0].port}` : `${gs.length} services`} marked not needed. Bring ${gs.length === 1 ? "it" : "them"} back under Watch more, Marked not needed.`);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  const can = session?.signed_in;
+  const row = (g) => (
+    <SuggestedRow key={key(g)} g={g} value={pick[key(g)] ?? "off"} onChange={(v) => setPick({ ...pick, [key(g)]: v })}
+                  onDismiss={can ? () => dismiss([g]) : null} busy={busy} />
+  );
   if (!suggestions.length) {
     return fleet.length ? (
-      <p className="muted small">Every port your containers publish is watched. Add a website or a device by hand, or import an argus.yml.</p>
+      <>
+        <p className="muted small">Every port your containers publish is watched{dismissed.length ? " or marked not needed" : ""}. Add a website or a device by hand, or import an argus.yml.</p>
+        <Dismissed dismissed={dismissed} session={session} onAdded={onAdded} />
+      </>
     ) : (
       <p className="muted small">Once a host reports in, the services it runs show up here to watch with one click.
         Until then: <a href="#/hosts">add a host</a>, or <a href="#watch-more" onClick={(e) => { e.preventDefault(); onTab("one"); }}>add a website or service</a> by hand.</p>
@@ -63,6 +121,7 @@ function Suggested({ suggestions, session, fleet, onAdded, onTab }) {
       <p className="muted small">
         Every port your hosts' containers publish that no check covers yet. <strong>Watch</strong> shows a problem here;
         <strong> Alert</strong> also sends you an alert. A good rule: alert for what you or others use.
+        Mark the rest <strong>Not needed</strong> and they stop showing here.
       </p>
       {hosts.map((h) => {
         const apps = suggestions.filter((g) => g.host === h && !g.internal);
@@ -70,15 +129,11 @@ function Suggested({ suggestions, session, fleet, onAdded, onTab }) {
         return (
           <div key={h} className="wm-host">
             <h3 className="eyebrow">{h}</h3>
-            {apps.length > 0 && <ul className="rows">{apps.map((g) => (
-              <SuggestedRow key={key(g)} g={g} value={pick[key(g)] ?? "off"} onChange={(v) => setPick({ ...pick, [key(g)]: v })} />
-            ))}</ul>}
+            {apps.length > 0 && <ul className="rows">{apps.map(row)}</ul>}
             {plumbing.length > 0 && (
               <details className="plumbing">
                 <summary className="small muted">Usually not worth watching ({plumbing.length})</summary>
-                <ul className="rows">{plumbing.map((g) => (
-                  <SuggestedRow key={key(g)} g={g} value={pick[key(g)] ?? "off"} onChange={(v) => setPick({ ...pick, [key(g)]: v })} />
-                ))}</ul>
+                <ul className="rows">{plumbing.map(row)}</ul>
               </details>
             )}
           </div>
@@ -89,9 +144,14 @@ function Suggested({ suggestions, session, fleet, onAdded, onTab }) {
           <button className="btn btn-primary" disabled={busy || chosen.length === 0} onClick={add}>
             {chosen.length ? `Add ${chosen.length} check${chosen.length === 1 ? "" : "s"}` : "Choose Watch or Alert above"}</button>
           {alerts > 0 && <span className="muted small">{alerts} will alert you</span>}
+          {chosen.length === 0 && (
+            <button className="btn" disabled={busy} onClick={() => dismiss(suggestions)}>
+              {suggestions.length === 1 ? "Not needed" : `None of these: mark all ${suggestions.length} not needed`}</button>
+          )}
         </div>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
+      <Dismissed dismissed={dismissed} session={session} onAdded={onAdded} />
     </>
   );
 }
@@ -155,7 +215,7 @@ function Import({ session, onAdded }) {
   );
 }
 
-export default function WatchMore({ suggestions, session, sites, groups, hosts, tab, onTab, onAdded }) {
+export default function WatchMore({ suggestions, dismissed = [], session, sites, groups, hosts, tab, onTab, onAdded }) {
   const tabs = [["suggested", `Suggested${suggestions.length ? ` (${suggestions.length})` : ""}`], ["one", "A website or service"], ["import", "Import"]];
   return (
     <section className="panel watch-more" id="watch-more">
@@ -166,7 +226,7 @@ export default function WatchMore({ suggestions, session, sites, groups, hosts, 
              onClick={(e) => { e.preventDefault(); onTab(k); }}>{label}</a>
         ))}</nav>
       </div>
-      {tab === "suggested" && <Suggested suggestions={suggestions} session={session} fleet={hosts ?? []} onAdded={onAdded} onTab={onTab} />}
+      {tab === "suggested" && <Suggested suggestions={suggestions} dismissed={dismissed} session={session} fleet={hosts ?? []} onAdded={onAdded} onTab={onTab} />}
       {tab === "one" && (
         <CheckForm session={session} check={null} sites={sites} groups={groups} hosts={hosts}
                    onDone={() => onAdded("Check added.")} onCancel={() => onTab("suggested")} />
