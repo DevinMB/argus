@@ -290,7 +290,7 @@ export default function App() {
                                 sub={siteNote(ss)} />;
                 })}
                 {checks.length > 0 && <Meter label="Alerts you if down" value={critical.filter((c) => c.status === "up").length}
-                       total={critical.length} tone="accent"
+                       total={critical.length} tone={critical.length || pausedCritical ? "accent" : "failing"}
                        sub={critical.length ? `checks that alert you are up${pausedCritical ? `, ${pausedCritical} paused` : ""}`
                          : "nothing alerts you yet: choose Alert on a check"} />}
               </div>
@@ -298,7 +298,15 @@ export default function App() {
           </section>
 
           {checks.length > 0 && <section className="attention" aria-live="polite">
-            {problems.length === 0 ? (
+            {problems.length === 0 && critical.length === 0 && !pausedCritical ? (
+              // Every check is dashboard only: a down service would only show here,
+              // and a new user had no way to tell (the fresh install's 26 checks).
+              <p className="quiet st-failing">
+                {checks.length === 1 ? "Your check does not" : `None of your ${checks.length} checks`} alert you: if a
+                service goes down, it only shows on this page. Open the ones you or others use and set <strong>When it is
+                down</strong> to <strong>Alert me</strong>.
+              </p>
+            ) : problems.length === 0 ? (
               <p className="quiet">Nothing needs attention.</p>
             ) : (
               <ul>
