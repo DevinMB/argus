@@ -10,13 +10,14 @@
 # keeps an existing enrollment unless given a new --code.
 set -eu
 
-URL="" PIN="" CODE="" READ_ONLY=""
+URL="" PIN="" CODE="" READ_ONLY="" REPLACE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --url) URL="$2"; shift 2 ;;
     --pin) PIN="$2"; shift 2 ;;
     --code) CODE="$2"; shift 2 ;;
     --read-only) READ_ONLY="--read-only"; shift ;;
+    --replace) REPLACE=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -30,7 +31,19 @@ case "$(uname -m)" in
 esac
 
 BIN=/usr/local/bin/argus-companion
-CONF=/etc/argus-companion/companion.json
+CONF="${ARGUS_COMPANION_CONF:-/etc/argus-companion/companion.json}"  # tests point it elsewhere
+
+# One host, one Argus. A companion that reports to another Argus (someone
+# else's, say, run on the same Proxmox server) is left alone: installing over
+# it would move this host to that Argus without its owner knowing.
+if [ -f "$CONF" ] && [ -z "$REPLACE" ]; then
+  MINE=$(sed -n 's/^ *"url": *"\([^"]*\)".*/\1/p' "$CONF" | head -n 1)
+  if [ -n "$MINE" ] && [ "${MINE%/}" != "${URL%/}" ]; then
+    echo "this host already reports to another Argus ($MINE), so nothing was changed." >&2
+    echo "To move it to $URL, run this again with --replace." >&2
+    exit 3
+  fi
+fi
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
