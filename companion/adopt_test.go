@@ -14,7 +14,7 @@ func TestCollectReadsOnlyTheProjectsOwnPlainFiles(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, ".env"), []byte("TOKEN=s3cret\n"), 0o600)
 	cs := []Container{{Name: "web", Project: "web", WorkingDir: dir,
 		ConfigFiles: []string{filepath.Join(dir, "compose.yml")}}}
-	got := collect("web", cs)
+	got := collect("web", cs, nil)
 	if got.Error != "" || got.Env != "TOKEN=s3cret\n" || got.Dir != dir {
 		t.Fatalf("got %+v", got)
 	}
@@ -23,18 +23,51 @@ func TestCollectReadsOnlyTheProjectsOwnPlainFiles(t *testing.T) {
 	}
 	// A label pointing outside the folder is refused, not read.
 	cs[0].ConfigFiles = []string{"/etc/passwd"}
-	if got := collect("web", cs); !strings.Contains(got.Error, "outside its folder") || len(got.Files) != 0 {
+	if got := collect("web", cs, nil); !strings.Contains(got.Error, "outside its folder") || len(got.Files) != 0 {
 		t.Fatalf("got %+v", got)
 	}
 	// A symlink is never followed.
 	_ = os.Remove(filepath.Join(dir, "compose.yml"))
 	_ = os.Symlink("/etc/hostname", filepath.Join(dir, "compose.yml"))
 	cs[0].ConfigFiles = []string{filepath.Join(dir, "compose.yml")}
-	if got := collect("web", cs); !strings.Contains(got.Error, "symlink") {
+	if got := collect("web", cs, nil); !strings.Contains(got.Error, "symlink") {
 		t.Fatalf("got %+v", got)
 	}
-	if got := collect("other", cs); got.Error == "" {
+	if got := collect("other", cs, nil); got.Error == "" {
 		t.Fatal("an unknown project must not be read")
+	}
+}
+
+// A stack an uninstall handed back keeps running with Docker's labels naming its
+// old folder; adoption reads it from where it went (seen on the v2 to v1 move).
+func TestCollectFindsAStackAnUninstallHandedBack(t *testing.T) {
+	d, _ := newTestDeployer(t)
+	d.HandedBack = t.TempDir()
+	old := filepath.Join(d.StacksDir, "dmb-kafka")
+	cs := []Container{{Name: "kafka", Project: "dmb-kafka", WorkingDir: old,
+		ConfigFiles: []string{filepath.Join(old, "compose.yml")}}}
+	// Taken: /opt/stacks/dmb-kafka holds something else, so it went to -argus.
+	_ = os.MkdirAll(filepath.Join(d.HandedBack, "dmb-kafka"), 0o755)
+	to := filepath.Join(d.HandedBack, "dmb-kafka-argus")
+	_ = os.MkdirAll(to, 0o755)
+	_ = os.WriteFile(filepath.Join(to, "compose.yml"), []byte("services: {}\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(to, ".env"), []byte("A=1\n"), 0o600)
+	if got := collect("dmb-kafka", cs, d.handedBack); got.Error == "" {
+		t.Fatalf("no mark yet, so not ours: %+v", got)
+	}
+	_ = os.WriteFile(filepath.Join(to, handedBackMark), []byte("dmb-kafka\n"), 0o644)
+	got := collect("dmb-kafka", cs, d.handedBack)
+	if got.Error != "" || got.Dir != to || got.Env != "A=1\n" || got.Files["compose.yml"] == "" {
+		t.Fatalf("got %+v", got)
+	}
+	// The old folder still there: the labels are right, nothing moved.
+	_ = os.MkdirAll(old, 0o755)
+	if got := collect("dmb-kafka", cs, d.handedBack); got.Dir != old {
+		t.Fatalf("got %+v", got)
+	}
+	// Only folders in StacksDir were ever handed back.
+	if d.handedBack("/srv/dmb-kafka") != "" {
+		t.Fatal("a folder outside StacksDir has no hand-back")
 	}
 }
 

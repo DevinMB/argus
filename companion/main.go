@@ -215,7 +215,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 		// monitoring-only host, whose files are not Argus's to take.
 		if len(reply.Collect) > 0 && !c.ReadOnly && report.Containers != nil {
 			for _, name := range reply.Collect {
-				got := collect(name, report.Containers)
+				got := collect(name, report.Containers, deployer.handedBack)
 				if got.Error == "" {
 					deployer.markAdopted(got.Dir)
 				}
