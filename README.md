@@ -37,6 +37,17 @@ docker compose up -d
 docker compose logs argus | grep "Setup code"
 ```
 
+### What to give it
+
+| | Recommended | Enough to run |
+| --- | --- | --- |
+| CPU | 1 core | a share of one (it idles near 0%) |
+| Memory | 512 MB | 256 MB |
+| Disk | 1 GB | about 300 MB for the image, plus its data |
+| Architecture | amd64 (x86-64) | |
+
+Measured on a homelab with 18 hosts, 32 checks and about 40 GitHub repos: 150 MB of memory, 0.1% of a core, and 4.4 MB of data after a day. Data grows slowly with check history and patch logs. A small VM or LXC container with 1 core, 1 GB of memory and 4 GB of disk runs Argus with room for Docker itself.
+
 Open **https://your-host:8443**. Argus makes its own certificate, so the browser warns once. Enter the setup code and choose a password, then follow the checklist. Want to look around first? [`scripts/demo.py`](scripts/demo.py) fills a fresh install with a made-up homelab.
 
 ## Learn more
