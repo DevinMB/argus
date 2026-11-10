@@ -58,6 +58,29 @@ def test_a_hosts_published_ports_become_ready_checks(client):
     assert s["steps"][3]["done"]
 
 
+def test_a_suggestion_marked_not_needed_leaves_the_list_and_can_come_back(client):
+    c, csrf = client
+    host(c, csrf, "nas", [
+        {"name": "jellyfin", "state": "running", "ports": [8096]},
+        {"name": "exporter", "state": "running", "ports": [9100]},
+    ], address_override="192.168.10.40")
+    s = c.get("/api/start").json()
+    gone = next(x for x in s["suggestions"] if x["port"] == 9100)
+    assert gone["key"] == "port:exporter:9100" and not gone["dismissed"]
+    r = c.put(f"/api/companions/{gone['host_id']}/ignored", headers=csrf,
+              json={"container": gone["key"], "ignored": True})
+    assert r.status_code == 200, r.text
+    s = c.get("/api/start").json()
+    assert [x["port"] for x in s["suggestions"]] == [8096]
+    assert [x["port"] for x in s["dismissed"]] == [9100]
+    # Out of the count too: one published service, none watched yet.
+    assert s["coverage"]["services"] == 1 and s["steps"][3]["suggest"] == 1
+    c.put(f"/api/companions/{gone['host_id']}/ignored", headers=csrf,
+          json={"container": gone["key"], "ignored": False})
+    s = c.get("/api/start").json()
+    assert len(s["suggestions"]) == 2 and s["dismissed"] == []
+
+
 def test_a_host_argus_shares_gets_checks_run_inside_it(client):
     c, csrf = client
     # The TestClient reports from "testclient", which is no IP: as if on Docker's bridge.
