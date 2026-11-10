@@ -506,3 +506,37 @@ def test_something_else_can_watch_argus(client, csrf):
     assert client.get("/api/info").json()["alerts"]["watched"] == "elsewhere"
     client.put("/api/alerts", headers=h, json={"watch_elsewhere": ""})
     assert client.get("/api/info").json()["alerts"]["watched"] is None
+
+
+def test_the_install_script_never_moves_a_host_from_another_argus(tmp_path):
+    # Someone else may run their own Argus on a Proxmox server where one of the
+    # owner's VMs lives; "Add Argus to all" there must not take that VM over (2026-11-10).
+    import json as _json
+    import subprocess
+
+    from argus.app import INSTALL_SH
+
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "id").write_text("#!/bin/sh\necho 0\n")
+    (stub / "curl").write_text("#!/bin/sh\necho 'curl ran' >&2\nexit 7\n")
+    for f in stub.iterdir():
+        f.chmod(0o755)
+    conf = tmp_path / "companion.json"
+    conf.write_text(_json.dumps({"url": "https://argus.home:8443", "token": "t"}, indent=2))
+
+    def run(*args):
+        return subprocess.run(
+            ["sh", str(INSTALL_SH), *args], capture_output=True, text=True,
+            env={"PATH": f"{stub}:/usr/bin:/bin", "ARGUS_COMPANION_CONF": str(conf)})
+
+    other = run("--url", "https://argus.chris:8443", "--code", "abcd-1234")
+    assert other.returncode == 3 and "curl ran" not in other.stderr
+    assert "already reports to another Argus (https://argus.home:8443)" in other.stderr
+    assert "--replace" in other.stderr
+    # Its own Argus (a reinstall or an update) goes ahead, as does --replace:
+    # both reach the download, which the stub fails.
+    for args in (("--url", "https://argus.home:8443/"),
+                 ("--url", "https://argus.chris:8443", "--replace")):
+        r = run(*args)
+        assert r.returncode == 7 and "curl ran" in r.stderr, r.stderr
