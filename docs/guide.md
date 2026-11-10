@@ -68,6 +68,7 @@ On **Hosts**, press **Add a host** and run the command it shows on the host. It 
 
 - The companion only calls Argus; nothing on the host listens. Its first call pins Argus's TLS key, and every reply from Argus is signed with a key it pins at enrollment.
 - The code in the command works once, for 15 minutes; a command made for several hosts (up to 50) works once per host, for an hour, and each host takes its own name. Removing a host revokes its token at once.
+- A host reports to one Argus. The command refuses a host whose companion already reports to another Argus (yours and a friend's on the same Proxmox server, say) and changes nothing; add `--replace` to move it on purpose. Add Argus on a Proxmox server's guest rows meets the same refusal.
 - A check with `companion: <host>` in `argus.yml` runs from inside that host, for services Argus cannot reach.
 - A host that misses three reports, or a disk past 95%, pages.
 - `argus-companion report` prints what it would send, without sending it.
