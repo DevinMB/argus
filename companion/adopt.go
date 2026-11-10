@@ -27,8 +27,11 @@ type Collected struct {
 const maxAdoptFile = 512 * 1024
 
 // collect reads a project's files. Only regular files inside the project's own
-// folder, never through a symlink, each at most 512 KB.
-func collect(project string, containers []Container) Collected {
+// folder, never through a symlink, each at most 512 KB. moved, when set, names
+// the folder a project's files went to since its containers started (an
+// uninstall hands stacks back without restarting them, so Docker's labels keep
+// the old folder); it returns "" when they did not move.
+func collect(project string, containers []Container, moved func(dir string) string) Collected {
 	out := Collected{Project: project}
 	var dir string
 	var files []string
@@ -48,6 +51,12 @@ func collect(project string, containers []Container) Collected {
 		out.Error = "its folder is not an absolute path"
 		return out
 	}
+	now := dir
+	if moved != nil {
+		if to := moved(dir); to != "" {
+			now, out.Dir = to, to
+		}
+	}
 	out.Files = map[string]string{}
 	for _, f := range files {
 		f = filepath.Clean(f)
@@ -55,7 +64,7 @@ func collect(project string, containers []Container) Collected {
 			out.Error = "a compose file of it lives outside its folder: " + f
 			return out
 		}
-		b, err := readPlain(f)
+		b, err := readPlain(filepath.Join(now, filepath.Base(f)))
 		if err != nil {
 			out.Error = err.Error()
 			return out
@@ -66,7 +75,7 @@ func collect(project string, containers []Container) Collected {
 		out.Error = "Docker does not say which compose file started it"
 		return out
 	}
-	if b, err := readPlain(filepath.Join(dir, ".env")); err == nil {
+	if b, err := readPlain(filepath.Join(now, ".env")); err == nil {
 		out.Env = string(b)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		out.Error = err.Error()
@@ -79,7 +88,7 @@ func readPlain(path string) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
-			return nil, fmt.Errorf("%s is a symlink; not read", path)
+			return nil, fmt.Errorf("%s is a symlink, and Argus reads only plain files; replace it with a copy of the file it points to", path)
 		}
 		return nil, err
 	}
@@ -92,6 +101,27 @@ func readPlain(path string) ([]byte, error) {
 		return nil, fmt.Errorf("%s is larger than 512 KB; not read", path)
 	}
 	return io.ReadAll(io.LimitReader(f, maxAdoptFile))
+}
+
+// handedBack is where a stack Argus created went when an earlier companion was
+// uninstalled: dir is its old folder in StacksDir, now gone, and the answer is
+// the /opt/stacks folder whose mark names it, or "" (see handBackScript).
+func (d *Deployer) handedBack(dir string) string {
+	if d.HandedBack == "" || filepath.Dir(dir) != filepath.Clean(d.StacksDir) {
+		return ""
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+		return ""
+	}
+	name := filepath.Base(dir)
+	for _, cand := range []string{name, name + "-argus"} {
+		to := filepath.Join(d.HandedBack, cand)
+		b, err := readPlain(filepath.Join(to, handedBackMark))
+		if err == nil && strings.TrimSpace(string(b)) == name {
+			return to
+		}
+	}
+	return ""
 }
 
 // The folders this companion collected: the only ones it will later deploy
