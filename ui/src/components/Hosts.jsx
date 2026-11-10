@@ -273,6 +273,46 @@ function Stacks({ stacks, session, reload }) {
 }
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+// What makes each urgent fix urgent, in a few words (design decision 22).
+function urgentWhy(u) {
+  const ids = (why) => u.cves.filter((c) => c.why === why).map((c) => c.id);
+  const exploited = ids("exploited");
+  const critical = ids("critical");
+  if (exploited.length) return `${exploited.slice(0, 2).join(", ")} is being exploited`;
+  if (critical.length) return `${critical.slice(0, 2).join(", ")} is rated critical`;
+  return "its distro rates the fix critical";
+}
+
+// Urgent security fixes on this host: what is waiting and when it goes in, or
+// why it cannot. Quiet when there is nothing urgent.
+function UrgentLine({ pt }) {
+  const u = pt.urgent;
+  if (!u) return null;
+  const on = pt.plan.enabled && (pt.plan.urgent ?? true);
+  const names = u.pending.slice(0, 4).map((x) => x.name).join(", ") + (u.pending.length > 4 ? ` and ${u.pending.length - 4} more` : "");
+  return (
+    <>
+      {u.skipped ? <p className="small st-down">Urgent fix waiting: {u.skipped}.</p>
+        : u.pending.length > 0 && (
+          <p className={`small ${on ? "st-failing" : "st-down"}`}>
+            Urgent security fix: {names} ({urgentWhy(u.pending[0])}).{" "}
+            {on ? `Argus installs ${u.pending.length === 1 ? "it" : "them"} at ${pt.plan.time} tonight (host time), without waiting for ${DAYS[pt.plan.day]}.`
+              : pt.plan.elsewhere ? "Whatever patches this host should take it soon."
+              : pt.plan.enabled ? "Urgent fixes are turned off for this host, so it waits for the weekly window."
+              : "Argus does not patch this host, so it stays open until you update it."}
+          </p>
+        )}
+      {on && u.data && (u.data.stale || u.data.error) && (
+        <p className="small muted">
+          {u.data.exploited_at
+            ? `The list of exploited flaws was last read ${agoText(Date.now() / 1000 - u.data.exploited_at)}${u.data.error ? ` (${u.data.error})` : ""}; urgent fixes may be missed until it answers.`
+            : "Argus has not read the list of exploited flaws yet, so nothing counts as urgent; it tries again every ten minutes."}
+        </p>
+      )}
+    </>
+  );
+}
+
 const RUN_TONE = { ok: "up", failed: "down", running: "accent", granted: "accent", rebooting: "accent" };
 
 function ExemptRows({ guests, session, mark }) {
@@ -442,6 +482,12 @@ function PatchForm({ host, session, refs, backups, onSaved, onCancel, reload }) 
             <label className="pf-check"><input type="checkbox" checked={p.reboot} onChange={(e) => set("reboot", e.target.checked)} />
               Reboot when an update needs it</label>
           </div>
+          <div className="pf-row">
+            <label className="pf-check"><input type="checkbox" checked={p.urgent ?? true} onChange={(e) => set("urgent", e.target.checked)} />
+              Install urgent security fixes the same night</label>
+          </div>
+          <p className="pf-note">Urgent means the flaw is being used in real attacks (CISA's list) or is rated critical (CVSS 9.0 or more).
+            Only those packages are installed, at this host's usual hour on any day, under the same safety net.</p>
         </div>
 
         <div className="pf-group">
@@ -546,11 +592,13 @@ function Patching({ host, session, refs, backups, reload }) {
       )}
       {host.report?.proxmox && !editing && <GuestsNet host={host} days={pt.plan.backup_days || 8} session={session} reload={reload} />}
       {pt.skipped && <p className="small st-failing">Not patched: {pt.skipped}.</p>}
+      <UrgentLine pt={pt} />
       {last && (
         <p className="small">
           <span className={`st-${RUN_TONE[last.result] ?? "unknown"}`}>
             {last.result === "granted" ? "starting" : last.result}
           </span>{" "}
+          {last.trigger === "urgent" && <span className="muted">urgent fix, </span>}
           {agoText(Date.now() / 1000 - last.requested)}{last.summary && `: ${last.summary}`}
         </p>
       )}
@@ -1153,8 +1201,9 @@ function FailedUnits({ host, session, reload }) {
 
 // Each pending update and, for a security one, why: its advisories and CVEs,
 // linked to the distro's own pages (design: the distro's sources only).
-function PackageList({ packages, os, pending }) {
+function PackageList({ packages, os, pending, urgent = [] }) {
   const [all, setAll] = useState(false);
+  const hot = Object.fromEntries(urgent.map((u) => [u.name, u]));
   const sec = packages.filter((p) => p.security);
   const shown = all ? packages : sec.length ? sec : packages.slice(0, 8);
   const more = packages.length - shown.length;
@@ -1178,8 +1227,10 @@ function PackageList({ packages, os, pending }) {
                 : "security update; its advisory shows here within the hour"}</span>
             )}
             {p.changes && <span className="row-sub small pkg-changes">{p.changes}</span>}</span>
-          <span className="row-note small">{p.security ? <span className={`tag tag-${p.severity === "Critical" || p.severity === "Important" ? "down" : "failing"}`}>
-            {p.severity ? `${p.severity.toLowerCase()} security` : "security"}</span> : null}</span>
+          <span className="row-note small">{hot[p.name]
+            ? <span className="tag tag-down" title={urgentWhy(hot[p.name])}>{hot[p.name].cves.some((c) => c.why === "exploited") ? "being exploited" : "critical"}</span>
+            : p.security ? <span className={`tag tag-${p.severity === "Critical" || p.severity === "Important" ? "down" : "failing"}`}>
+              {p.severity ? `${p.severity.toLowerCase()} security` : "security"}</span> : null}</span>
           <span className="row-act" />
         </li>
       ))}</ul>
@@ -1224,7 +1275,7 @@ function Overview({ host, suggestions, session, reload, updateCommand, hosts }) 
               : `Up to date (${r.updates.manager}).`)}
             {r.reboot_required && <span className="st-failing"> Needs a reboot.</span>}
           </p>
-          {r.updates?.packages?.length > 0 && <PackageList packages={r.updates.packages} os={r.os} pending={r.updates.pending} />}
+          {r.updates?.packages?.length > 0 && <PackageList packages={r.updates.packages} os={r.os} pending={r.updates.pending} urgent={host.patching?.urgent?.pending} />}
         </Section>
       )}
       {r.failed_units?.length > 0 && <FailedUnits host={host} session={session} reload={reload} />}

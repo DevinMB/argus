@@ -19,6 +19,12 @@ all of them, and a reboot when one is needed if allowed. A restore test is
 optional: shown on the card, encouraged, never required.
 
 A run that reports nothing for two hours counts as failed.
+
+Urgent security fixes do not wait for the weekly window (decision 22): when a
+pending update closes a CVE that is being exploited or is rated critical
+(argus.urgent), the host installs just those packages at its usual hour that
+same night, any day, under every rule above. It reboots only if its plan
+allows; otherwise the fix is installed and Argus says a reboot is waiting.
 """
 
 from __future__ import annotations
@@ -28,6 +34,8 @@ from collections.abc import Callable
 
 SETTINGS = "patch."  # + host: the host's schedule and safety net
 REQUEST = "patch.request."  # + host: "patch now" pressed
+NOTICES = "patch.notices"  # good news to send once: an urgent fix went in
+URGENT_WHY = "patch.urgent_why"  # run id -> what it fixes, until the run ends
 TESTED = 35 * 86400  # a restore test older than this is worth a nudge
 # A run may start up to six hours after the window opens: hosts take turns, one
 # at a time, so the last of fifteen guests still gets its turn before morning.
@@ -47,7 +55,9 @@ DEFAULTS = {"enabled": False, "day": 1, "time": "03:00", "level": "full", "reboo
             "no_backup": False,
             # Backed up by something Argus cannot see (another person's hypervisor):
             # the owner's word, in their own words, shown as such.
-            "outside_backup": ""}
+            "outside_backup": "",
+            # Urgent security fixes the same night, outside the weekly window.
+            "urgent": True}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS patch_runs (
@@ -76,6 +86,9 @@ class Patching:
         self.db.executescript(SCHEMA)
         # Why a host's window passed without a run, for the page and the alert.
         self.skipped: dict[str, str] = {}
+        # Why an urgent fix could not go in that night, the same way.
+        self.urgent_skipped: dict[str, str] = {}
+        self.urgent = None  # argus.urgent.Urgent, set by the app
 
     def plan(self, host: str) -> dict:
         return {**DEFAULTS, **(self.settings.get(SETTINGS + host) or {})}
@@ -90,6 +103,7 @@ class Patching:
         self.settings.set(SETTINGS + host, None)
         self.settings.set(REQUEST + host, None)
         self.skipped.pop(host, None)
+        self.urgent_skipped.pop(host, None)
         with self.db:
             self.db.execute("DELETE FROM patch_runs WHERE host = ?", (host,))
 
@@ -241,12 +255,29 @@ class Patching:
             return
         done = state in ("ok", "failed")
         with self.db:
-            self.db.execute(
+            cur = self.db.execute(
                 "UPDATE patch_runs SET result = ?, summary = ?, log = ?, finished = ?"
                 " WHERE id = ? AND host = ? AND result IN ('granted', 'running')",
                 ("running" if not done else state, str(rep.get("summary", ""))[:500],
                  str(rep.get("log", ""))[-32 * 1024:], self.clock() if done else None,
                  int(rep["run"]), host))
+        if done and cur.rowcount:
+            whys = dict(self.settings.get(URGENT_WHY) or {})
+            what = whys.pop(str(int(rep["run"])), None)
+            if what is not None:
+                self.settings.set(URGENT_WHY, whys or None)
+                if state == "ok":  # a failed run is a problem, told as one
+                    notices = list(self.settings.get(NOTICES) or [])
+                    notices.append(f"Urgent security fix installed on {host}: {what}. "
+                                   f"{str(rep.get('summary', ''))[:300]}".strip())
+                    self.settings.set(NOTICES, notices[-20:])
+
+    def take_notices(self) -> list[str]:
+        """Good news to send once (the alerter drains it)."""
+        notices = list(self.settings.get(NOTICES) or [])
+        if notices:
+            self.settings.set(NOTICES, None)
+        return notices
 
     def expire(self) -> None:
         """A run with no result for two hours failed: free the lock and say so."""
@@ -278,26 +309,11 @@ class Patching:
             # Its turn never came: other hosts took the whole window. Say so.
             self.skipped[host] = "its window ended before its turn came (other hosts took it)"
         if not (manual or (p["enabled"] and in_window)):
-            return None
+            return self._urgent_grant(host, p, report, local, weekday, minute, start)
         if not manual and done_today:
             return None
-        why = None
         safety = self.safety(host, report)
-        if p["backup"] == GUESTS:
-            # One Proxmox server at a time: never while another's newest run failed.
-            for other in self.rt.companions.views():
-                if other["name"] != host and (other["report"] or {}).get("proxmox"):
-                    last = self.runs(other["name"], 1)
-                    if last and last[0]["result"] == "failed":
-                        why = (f"the last run on {other['name']}, another Proxmox server,"
-                               " failed; fix it first")
-        if not why and not safety["ok"]:
-            age = safety["backup_age"]
-            why = (safety["net"] if p["backup"] == GUESTS
-                   else f"its backup ({safety['backup']}) is {int(age // 86400)} days old,"
-                   f" over its limit of {p['backup_days']}" if age is not None
-                   else f"its backup ({p['backup']}) has never reported" if p["backup"]
-                   else "it has no backup linked")
+        why = self._blocked(host, p, safety)
         if why:
             self.skipped[host] = why
             if manual:
@@ -316,6 +332,73 @@ class Patching:
         self.settings.set(REQUEST + host, None)
         return {"run": cur.lastrowid, "level": level, "reboot": reboot,
                 "snapshot": bool(safety["snapshot"])}
+
+    def _blocked(self, host: str, p: dict, safety: dict) -> str | None:
+        """Why this host may not be patched now, whatever asked for the run."""
+        if p["backup"] == GUESTS:
+            # One Proxmox server at a time: never while another's newest run failed.
+            for other in self.rt.companions.views():
+                if other["name"] != host and (other["report"] or {}).get("proxmox"):
+                    last = self.runs(other["name"], 1)
+                    if last and last[0]["result"] == "failed":
+                        return (f"the last run on {other['name']}, another Proxmox server,"
+                                " failed; fix it first")
+        if safety["ok"]:
+            return None
+        age = safety["backup_age"]
+        return (safety["net"] if p["backup"] == GUESTS
+                else f"its backup ({safety['backup']}) is {int(age // 86400)} days old,"
+                f" over its limit of {p['backup_days']}" if age is not None
+                else f"its backup ({p['backup']}) has never reported" if p["backup"]
+                else "it has no backup linked")
+
+    def urgent_pending(self, host: str, report: dict | None) -> list[dict]:
+        """This host's pending updates that cannot wait (argus.urgent.Urgent.of)."""
+        if self.urgent is None:
+            return []
+        return self.urgent.of(((report or {}).get("updates") or {}).get("packages") or [])
+
+    def _urgent_grant(self, host: str, p: dict, report: dict | None, local: dict,
+                      weekday: int, minute: int, start: int) -> dict | None:
+        """A run for just the urgent fixes, at the host's usual hour on any day."""
+        pending = self.urgent_pending(host, report) if p["enabled"] and p["urgent"] else []
+        if not pending:
+            self.urgent_skipped.pop(host, None)
+            return None
+        if not start <= minute < start + WINDOW // 60:
+            return None  # tonight, at its usual hour: not in the middle of the day
+        if self.db.execute(
+                "SELECT 1 FROM patch_runs WHERE host = ? AND local_date = ?"
+                " AND trigger IN ('urgent', 'window')", (host, local["date"])).fetchone():
+            return None  # one try a night; the weekly run took them on its own day
+        what = self.urgent.reason(pending)
+        if (report or {}).get("proxmox"):
+            # A Proxmox server is only ever updated as a whole (dist-upgrade), never
+            # a package at a time: the owner hears about the fix and decides.
+            self.urgent_skipped[host] = (
+                f"{what} waits for its weekly run: a Proxmox server is only updated as a "
+                "whole, so Argus installs no single package on it. Press Patch now to "
+                "take it sooner")
+            return None
+        safety = self.safety(host, report)
+        why = self._blocked(host, p, safety)
+        if why:
+            self.urgent_skipped[host] = f"{what} could not be installed: {why}"
+            return None
+        if self.running() is not None:
+            return None
+        self.urgent_skipped.pop(host, None)
+        reboot = bool(p["reboot"])
+        with self.db:
+            cur = self.db.execute(
+                "INSERT INTO patch_runs (host, requested, result, level, reboot, trigger,"
+                " local_date) VALUES (?, ?, 'granted', 'urgent', ?, 'urgent', ?)",
+                (host, self.clock(), int(reboot), local["date"]))
+        self.settings.set(URGENT_WHY, {**(self.settings.get(URGENT_WHY) or {}),
+                                       str(cur.lastrowid): what})
+        return {"run": cur.lastrowid, "level": "urgent", "reboot": reboot,
+                "snapshot": bool(safety["snapshot"]),
+                "packages": [u["name"] for u in pending][:100]}
 
     def elsewhere(self, p: dict) -> dict | None:
         """How the other tool's job is doing, when the plan names one."""
@@ -347,7 +430,11 @@ class Patching:
         p = self.plan(host)
         safety = self.safety(host, report)
         runs = self.runs(host)
+        urgent = {"pending": self.urgent_pending(host, report),
+                  "skipped": self.urgent_skipped.get(host),
+                  "data": self.urgent.status() if self.urgent is not None else None}
         return {"plan": p, "safety": safety, "runs": runs, "elsewhere": self.elsewhere(p),
+                "urgent": urgent,
                 "suggested_backup": self.suggest(host, report, backups or []),
                 "skipped": self.skipped.get(host), "requested": bool(
                     self.settings.get(REQUEST + host)),
@@ -364,4 +451,14 @@ class Patching:
             if h in self.skipped:
                 out.append((f"patch-skipped:{h}", f"{h} was not patched",
                             f"Its window passed: {self.skipped[h]}."))
+            if h in self.urgent_skipped:
+                out.append((f"patch-urgent:{h}", f"{h} has an urgent security fix waiting",
+                            f"{self.urgent_skipped[h]}."))
+            # An urgent fix went in but only takes effect after a reboot the plan
+            # does not allow: the owner's move.
+            if last and last[0]["trigger"] == "urgent" and last[0]["result"] == "ok" \
+                    and (self.rt.companions.report_of(h) or {}).get("reboot_required"):
+                out.append((f"patch-reboot:{h}", f"{h} needs a reboot to finish an urgent fix",
+                            "The fix is installed and takes effect after a reboot, which "
+                            "this host's plan does not allow. Reboot it when you can."))
         return out

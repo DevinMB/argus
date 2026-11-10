@@ -358,8 +358,13 @@ class Alerter:
             for r in cleared:
                 self.db.execute("DELETE FROM alerts WHERE key = ?", (r["key"],))
 
+        # Good news told once: an urgent security fix went in (decision 22). With
+        # Prometheus as the sender there is nowhere to say it; the host's card does.
+        notices = self.patching.take_notices() if self.patching is not None else []
         if channel is None:
             return
+        for text in notices:
+            await self._send(channel, f"🛡 {text}" + self._link("#/hosts"))
         # Pausing a check is not its recovery: no "resolved" for it.
         paused = {f"check:{n}" for n in self.rt.store.pauses()}
         told = [r for r in cleared if r["notified"] and r["key"] not in paused]
