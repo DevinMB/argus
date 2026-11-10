@@ -944,6 +944,8 @@ button.ctable-row:hover { background: var(--raise); }
 /* A destructive action sits last and looks it, without shouting. */
 .btn-quiet-danger { color: var(--muted); border-color: transparent; background: none; }
 .btn-quiet-danger:hover { color: var(--down); border-color: rgb(255 107 94 / 0.4); }
+.btn-quiet { color: var(--muted); border-color: transparent; background: none; }
+.btn-quiet:hover { color: var(--text); border-color: var(--line); }
 
 .hd-build { margin: 2px 0 0; font: 11.5px var(--mono); overflow-wrap: anywhere; }
 
