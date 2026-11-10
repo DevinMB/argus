@@ -74,8 +74,11 @@ type Disk struct {
 }
 
 type Updates struct {
-	Pending   *int      `json:"pending"`
-	Security  *int      `json:"security"`
+	Pending  *int `json:"pending"`
+	Security *int `json:"security"`
+	// Updates apt holds back for now: Ubuntu rolls some out to a growing share
+	// of machines, and this one's turn has not come. Not counted in Pending.
+	Phased    []string  `json:"phased,omitempty"`
 	Packages  []Package `json:"packages,omitempty"`
 	Manager   string    `json:"manager"`
 	CheckedAt float64   `json:"checked_at"`
@@ -90,6 +93,7 @@ type Collector struct {
 	RebootFile   string
 	Proxmox      proxmoxPaths
 	run          func(name string, args ...string) (string, int, error)
+	hostMounts   bool // ask apt in the host's mount namespace (see aptSim)
 	// dnf check-update with a fresh cache, outside the read-only sandbox.
 	dnfFresh func() (string, int, error)
 
@@ -113,6 +117,7 @@ func newCollector() *Collector {
 		RebootFile:   "/var/run/reboot-required",
 		Proxmox:      defaultProxmoxPaths,
 		run:          runCommand,
+		hostMounts:   sandboxed(),
 		dnfFresh:     dnfFresh,
 		changelogs:   newChangelogs(),
 	}
@@ -377,14 +382,14 @@ func (c *Collector) pendingUpdates() *Updates {
 	switch {
 	case has("apt-get"):
 		u.Manager = "apt"
-		out, code, err := c.run("apt-get", "-s", "-o", "Debug::NoLocking=true",
-			"-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "dist-upgrade")
+		out, code, err := c.aptSim("-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "dist-upgrade")
 		if err != nil || code != 0 {
 			u.Error = commandError("apt-get -s dist-upgrade", code, err)
 			return u
 		}
 		n, sec := parseAptSim(out)
 		u.Pending, u.Security = &n, &sec
+		u.Phased = parseAptPhased(out)
 		u.Packages = parseAptPackages(out)
 		if c.changelogs != nil {
 			todo := c.changelogs.fill(c, u.Packages)
@@ -494,6 +499,54 @@ func nonEmptyLines(s string) []string {
 }
 
 // parseAptSim counts "Inst" lines of apt-get -s, and those from a -security suite.
+// aptSim asks apt what an upgrade would do, without doing it. Inside the
+// service's sandbox apt sees a root that differs from PID 1's, takes that for a
+// chroot, and then ignores Ubuntu's phased updates (apt's depcache: phasing is
+// off when isChroot()): it listed updates a real run then deferred, and the
+// host showed "3 pending" for good (couchdb, 2026-11-10). So the question is
+// asked in the host's own mount namespace, where a patch run's apt answers too.
+// It writes nothing there: a simulation, with no lock and no cache files.
+func (c *Collector) aptSim(args ...string) (string, int, error) {
+	full := append([]string{"-s", "-o", "Debug::NoLocking=true"}, args...)
+	if c.hostMounts {
+		ns := append([]string{"--target", "1", "--mount", "--", "apt-get"}, full...)
+		if out, code, err := c.run("nsenter", ns...); err == nil && code == 0 {
+			return out, code, err
+		}
+	}
+	return c.run("apt-get", full...)
+}
+
+// sandboxed: this process has a mount namespace of its own (systemd's
+// ProtectSystem and friends), and nsenter is there to look past it.
+func sandboxed() bool {
+	if _, err := exec.LookPath("nsenter"); err != nil {
+		return false
+	}
+	mine, err1 := os.Readlink("/proc/self/ns/mnt")
+	host, err2 := os.Readlink("/proc/1/ns/mnt")
+	return err1 == nil && err2 == nil && mine != host
+}
+
+// parseAptPhased is the packages apt names under "deferred due to phasing".
+func parseAptPhased(out string) []string {
+	var names []string
+	in := false
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "deferred due to phasing") {
+			in = true
+			continue
+		}
+		if in {
+			if !strings.HasPrefix(line, " ") {
+				break
+			}
+			names = append(names, strings.Fields(line)...)
+		}
+	}
+	return names
+}
+
 func parseAptSim(out string) (pending, security int) {
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "Inst ") {

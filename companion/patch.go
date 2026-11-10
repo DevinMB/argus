@@ -380,7 +380,7 @@ func updateSteps(level string, c *Collector, urgent []string) ([][]string, error
 			return append(steps, []string{"unattended-upgrade", "-v"}), nil
 		}
 		// No unattended-upgrades: the packages apt would take from a -security suite.
-		out, _, err := c.run("apt-get", "-s", "-o", "Debug::NoLocking=true", "dist-upgrade")
+		out, _, err := c.aptSim("dist-upgrade")
 		if err != nil {
 			return nil, err
 		}
