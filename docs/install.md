@@ -2,7 +2,7 @@
 
 ## What you need
 
-- A machine that is always on, with Docker: a NAS, a Pi 4 or 5, a small VM. Argus uses about 100 MB of memory.
+- A machine that is always on, with Docker, on amd64 (x86-64): a NAS, a mini PC, a small VM or LXC container. Give Argus 1 core and 512 MB of memory; it uses about 150 MB with 18 hosts and idles near 0% CPU. Its data stays small (a few MB). See the README's table for the details.
 - For hosts you want to know about (containers, disks, updates, patching, deploys): Linux on amd64 or arm64, with root. It runs as a systemd service, or an OpenRC one (Alpine); on Alpine, `apk add curl` first.
 - Optional: a Telegram account for alerts, a GitHub account for updates and deploys.
 
