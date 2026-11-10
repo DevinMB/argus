@@ -43,7 +43,18 @@ jobs:
           EXACT: ${{ inputs.version }}
         run: |
           set -eu
-          last=$(gh api "repos/$GITHUB_REPOSITORY/tags?per_page=100" --jq '.[].name' \
+          # GitHub's API answers with an empty body now and then ("unexpected end
+          # of JSON input", release #8): reads try three times before giving up.
+          read_api() {
+            local i out
+            for i in 1 2 3; do
+              if out=$(gh api "$@"); then printf '%s\n' "$out"; return 0; fi
+              sleep 5
+            done
+            return 1
+          }
+          tags=$(read_api "repos/$GITHUB_REPOSITORY/tags?per_page=100" --jq '.[].name')
+          last=$(printf '%s\n' "$tags" \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
           if [ -n "$EXACT" ]; then
             next=${EXACT#v}
@@ -58,8 +69,8 @@ jobs:
               *)     next="$a.$b.$((c + 1))" ;;
             esac
           fi
-          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
-          if [ -n "$last" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/v$last" --jq .sha)" = "$sha" ]; then
+          sha=$(read_api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ -n "$last" ] && [ "$(read_api "repos/$GITHUB_REPOSITORY/commits/v$last" --jq .sha)" = "$sha" ]; then
             echo "main is v$last already: nothing to release"; exit 0
           fi
           gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$next" -f sha="$sha" >/dev/null
