@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -428,13 +429,20 @@ def _placed(add, placed: list[dict], main: dict | None, built: str, now: float,
         add("deployed", "pending", "Waits for the tag bump")
         return False
     hosts = [(h, st) for p in placed for h, st in p["status"].items()]
+    why = {h: d for p in placed for h, d in (p.get("detail") or {}).items() if d}
     if not hosts:
         add("deployed", "not_wired", "No hosts/ file in the deploy repo lists its stack")
         return False
     bad = [h for h, st in hosts if st in ("failed", "refused", "rolled_back")]
     waiting = [h for h, st in hosts if st not in ("deployed", "read_only")]
     if bad:
-        add("deployed", "failed", f"Deploy failed on {', '.join(bad)}; see Hosts")
+        # Name the reason when the companion gave one, and link the host's Deploys
+        # tab, where the stack shows it in full with what to do.
+        first = bad[0]
+        reason = why.get(first, "")
+        add("deployed", "failed",
+            f"Deploy failed on {', '.join(bad)}" + (f": {reason}" if reason else ""),
+            link=f"#/hosts?host={quote(first)}&tab=deploys")
         return False
     if waiting:
         add("deployed", "running", f"Deploying sha-{sha} on {', '.join(waiting)}")
@@ -469,9 +477,9 @@ def track(state: dict, check: dict | None, beats: dict[str, dict], now: float,
     """
     steps = []
 
-    def add(key, status, detail, url=None, at=None):
+    def add(key, status, detail, url=None, at=None, link=None):
         steps.append({"key": key, "title": TITLES[key], "status": status, "detail": detail,
-                      "url": url, "at": at})
+                      "url": url, "at": at, **({"link": link} if link else {})})
 
     ups = state["updates"]
     dep = state.get("dependabot")

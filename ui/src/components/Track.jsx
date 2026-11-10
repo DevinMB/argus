@@ -12,6 +12,8 @@ export default function Track({ steps, now }) {
     <ol className="track">
       {steps.map((s) => {
         const href = safeHref(s.url);
+        // An Argus page (a host's Deploys tab): opens here, not in a new tab.
+        const inside = typeof s.link === "string" && s.link.startsWith("#/") ? s.link : null;
         return (
           <li key={s.key} className={`step step-${s.status}`}>
             <span className="step-node" aria-hidden="true" />
@@ -22,7 +24,8 @@ export default function Track({ steps, now }) {
                 {s.at && <time>{agoText(now - s.at)}</time>}
               </div>
               <div className="step-detail">
-                {href ? <a href={href} target="_blank" rel="noreferrer">{s.detail}</a> : s.detail}
+                {inside ? <a href={inside}>{s.detail}</a>
+                  : href ? <a href={href} target="_blank" rel="noreferrer">{s.detail}</a> : s.detail}
               </div>
             </div>
           </li>
