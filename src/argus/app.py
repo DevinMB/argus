@@ -172,7 +172,8 @@ class AlertSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     telegram_token: str | None = Field(None, max_length=200, pattern=r"^$|^\d{3,20}:[\w-]{20,100}$")
     chat_id: str | None = Field(None, pattern=r"^$|^-?\d{1,20}$|^@[A-Za-z0-9_]{5,32}$")
-    rules: dict[Literal["checks", "jobs", "heartbeats", "companions"], bool] | None = None
+    rules: dict[Literal["checks", "jobs", "heartbeats", "companions", "apps"],
+                bool] | None = None
     repeat_minutes: int | None = Field(None, ge=0, le=7 * 24 * 60)
     link: str | None = Field(None, max_length=300)
     watch_url: str | None = Field(None, max_length=500)
@@ -601,6 +602,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             lambda: {c for v in rt.companions.views()
                      for p in ((v["report"] or {}).get("updates") or {}).get("packages") or []
                      if p.get("security") for c in p.get("cves") or []})
+        alerter.gh, alerter.urgent = gh, app.state.urgent
         app.state.adoption = Adoption(settings, deploys, rt.clock)
         app.state.guests = GuestInstalls(rt.clock)
         app.state.uninstalls = Uninstalls(settings, rt.clock)

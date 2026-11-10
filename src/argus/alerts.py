@@ -32,6 +32,7 @@ from typing import Literal, Protocol
 import httpx
 
 from argus.companions import DISK_FULL, QUIET_AFTER
+from argus.github import stuck_fixes
 from argus.runtime import Runtime
 from argus.settings import Settings
 
@@ -44,7 +45,8 @@ RETRY_AFTER = 60  # seconds after a failed send
 WATCH_EVERY = 60  # seconds between dead-man pings
 SWITCH_WINDOW = 3600  # a test must be this recent to switch senders
 PROM_TEST_FOR = 15 * 60  # how long argus_alert_test stays 1
-DEFAULT_RULES = {"checks": True, "jobs": True, "heartbeats": True, "companions": True}
+DEFAULT_RULES = {"checks": True, "jobs": True, "heartbeats": True, "companions": True,
+                 "apps": True}
 DEFAULT_REPEAT = 240  # minutes; 0 means never repeat
 
 TOKEN = "alerts.telegram.token"  # noqa: S105 (a setting name, not a secret)
@@ -160,6 +162,8 @@ class Alerter:
         self._retry_at = 0.0
         self.deploys = None  # set by the app: failed deploys page under "companions"
         self.patching = None  # and so do failed or skipped patch runs
+        self.gh = None  # the GitHub poller: an app's critical fix that waits for the owner
+        self.urgent = None  # argus.urgent: which CVEs are being exploited
 
     # --- settings, as the UI sees them ---
 
@@ -294,6 +298,19 @@ class Alerter:
             for key, title, detail in self.patching.problems(
                     [c["name"] for c in rt.companions.views()]):
                 out[key] = Problem(title, detail, "#/hosts")
+        if rules["apps"] and self.gh is not None:
+            exploited = (lambda cve: cve in self.urgent.exploited) if self.urgent else (
+                lambda cve: False)
+            for name, state in sorted(self.gh.repos.items()):
+                for f in stuck_fixes(state, exploited):
+                    flaw = ("a flaw that is being exploited" if f["hot"] == "exploited"
+                            else "a critical flaw")
+                    how = ("is a major update, which Argus leaves to you"
+                           if f["why"] == "waits" else "fails its checks, so it will not merge")
+                    out[f"app-fix:{name}:{f['package']}"] = Problem(
+                        f"{name} has a security fix waiting for you",
+                        f"{f['package']} has {flaw} ({f['cve'] or f['summary'][:80]}). Its fix, "
+                        f"PR #{f['pr']}, {how}.", "#/updates")
         if rules["companions"]:
             for c in rt.companions.views():
                 if c["status"] == "quiet":

@@ -69,6 +69,31 @@ def is_major(title: str) -> bool:
     return a != b or (a == "0" and (a2 or "0") != (b2 or "0"))
 
 
+def stuck_fixes(state: dict, exploited: Callable[[str], bool] = lambda cve: False) -> list[dict]:
+    """Security alerts that cannot wait and whose fix will not arrive on its own
+    (design decision 22, for apps): critical, or a flaw being exploited, with an
+    update PR for that package that waits for the owner (a major version) or
+    fails its checks. Patch and minor fixes merge and deploy by themselves, and
+    an alert with no PR yet has nothing to press: neither is listed."""
+    out = []
+    for a in state.get("alerts") or []:
+        hot = "exploited" if a.get("cve") and exploited(a["cve"]) else (
+            "critical" if a.get("severity") == "critical" else "")
+        if not hot:
+            continue
+        name = re.escape(a["package"])
+        for u in state.get("updates") or []:
+            if not re.search(rf"(?<![\w./@-]){name}(?![\w./-])", u["title"], re.IGNORECASE):
+                continue
+            why = ("waits" if u["waits_for_you"] else "failing" if u["ci"] == "failure" else "")
+            if why:
+                out.append({"package": a["package"], "summary": a["summary"], "hot": hot,
+                            "cve": a.get("cve", ""), "why": why, "pr": u["number"],
+                            "title": u["title"], "url": u["url"]})
+                break
+    return out
+
+
 @dataclass(frozen=True)
 class Target:
     """One repo to poll: where it lives and what argus.yml says about it."""
@@ -287,6 +312,7 @@ class Poller:
                 {"severity": a["security_vulnerability"]["severity"],
                  "package": a["security_vulnerability"]["package"]["name"],
                  "summary": a["security_advisory"]["summary"],
+                 "cve": a["security_advisory"].get("cve_id") or "",
                  "created_at": ts(a["created_at"]), "url": a["html_url"]}
                 for a in alerts
             ],
