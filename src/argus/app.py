@@ -60,6 +60,7 @@ from argus.settings import Settings, load_key
 from argus.sniff import Sniffer
 from argus.uninstalls import COMMAND as UNINSTALL_COMMAND
 from argus.uninstalls import Uninstalls
+from argus.urgent import Urgent
 
 # While Argus updates itself, watchers expect silence this long from the request.
 WATCH_QUIET = 15 * 60
@@ -362,6 +363,7 @@ class PatchPlan(BaseModel):
     elsewhere_job: str = Field("", pattern=r"^$|^(job|heartbeat):[a-z0-9][a-z0-9-]{0,62}$")
     no_backup: bool = False  # the owner can rebuild it: patch without a backup
     outside_backup: str = Field("", max_length=200)  # backed up where Argus cannot see
+    urgent: bool = True  # exploited or critical fixes the same night (decision 22)
 
 
 class PveBackup(BaseModel):
@@ -592,6 +594,11 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         app.state.deploys = alerter.deploys = deploys
         app.state.configsrc = configsrc.ConfigSource(rt, settings, gh, rt.clock)
         app.state.patching = alerter.patching = Patching(rt.store.db, settings, rt, rt.clock)
+        app.state.urgent = app.state.patching.urgent = Urgent(
+            rt.store.db, settings, client, rt.clock,
+            lambda: {c for v in rt.companions.views()
+                     for p in ((v["report"] or {}).get("updates") or {}).get("packages") or []
+                     if p.get("security") for c in p.get("cves") or []})
         app.state.adoption = Adoption(settings, deploys, rt.clock)
         app.state.guests = GuestInstalls(rt.clock)
         app.state.uninstalls = Uninstalls(settings, rt.clock)
@@ -606,6 +613,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             tasks.append(asyncio.create_task(deploys.run_forever()))
             tasks.append(asyncio.create_task(app.state.configsrc.run_forever()))
             tasks.append(asyncio.create_task(app.state.selfupdate.run_forever()))
+            tasks.append(asyncio.create_task(app.state.urgent.run_forever()))
             tasks.append(asyncio.create_task(github.run_forever(
                 gh, lambda: rt.config, lambda: set(settings.get(ghauth.HIDDEN, [])))))
         yield

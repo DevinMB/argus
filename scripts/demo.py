@@ -58,6 +58,16 @@ HOSTS = {
         ],
         "disks": [("/", 64, 21), ("/srv", 7450, 5390)],
         "updates": (4, 1), "units": [],
+        # One pending fix for a flaw on CISA's exploited list: Argus marks it
+        # urgent and installs it the same night (design decision 22).
+        "packages": [
+            {"name": "sudo", "from": "1.9.16p2-3", "to": "1.9.16p2-3+deb13u1", "security": True,
+             "advisories": ["DSA-5954-1"], "cves": ["CVE-2025-32463"],
+             "changes": "Fix a local privilege escalation through the chroot option."},
+            {"name": "curl", "from": "8.14.1-2", "to": "8.14.1-2+deb13u2"},
+            {"name": "libcurl4t64", "from": "8.14.1-2", "to": "8.14.1-2+deb13u2"},
+            {"name": "tzdata", "from": "2025b-4", "to": "2025b-4+deb13u1"},
+        ],
     },
     "pi": {
         "os": "Raspbian GNU/Linux 12 (bookworm)", "kernel": "6.6.51+rpt-rpi-v8", "arch": "arm64",
@@ -124,7 +134,7 @@ def report(c: Client, token: str, name: str, h: dict) -> None:
         "disks": [{"mount": m, "total": int(t * GB), "used": int(u * GB)}
                   for m, t, u in h["disks"]],
         "updates": {"pending": pending, "security": security, "manager": "apt",
-                    "checked_at": time.time()},
+                    "checked_at": time.time(), "packages": h.get("packages", [])},
         "reboot_required": h.get("reboot", False), "policy_roots": ["/srv", "/opt"],
         "local": {"weekday": (now.tm_wday), "time": time.strftime("%H:%M", now),
                   "date": time.strftime("%Y-%m-%d", now)},

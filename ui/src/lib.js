@@ -483,6 +483,9 @@ export function attention(host) {
   if (units.length) out.push(["down", `${units.length} failed unit${units.length === 1 ? "" : "s"}`]);
   const last = host.patching?.runs?.[0];
   if (last?.result === "failed") out.push(["down", "last patch run failed"]);
+  // An exploited or critical fix is waiting (design decision 22).
+  const hot = host.patching?.urgent?.pending?.length ?? 0;
+  if (hot) out.push(["down", `${hot} urgent security fix${hot === 1 ? "" : "es"}`]);
   for (const d of r.disks ?? []) {
     const tone = diskTone(d);
     if (tone !== "up") out.push([tone, `${d.mount} ${Math.round((d.used / d.total) * 100)}% full`]);

@@ -317,6 +317,9 @@ describe("the hosts list", () => {
       disks: [{ mount: "/", total: 100, used: 96 }], updates: { pending: 47, security: 3 }, reboot_required: true } }))
       .toEqual([["down", "1 container down"], ["down", "/ 96% full"], ["failing", "47 updates, 3 security"], ["failing", "needs a reboot"]]);
     expect(attention({ status: "waiting" })).toEqual([["unknown", "waiting for its first report"]]);
+    // An exploited or critical fix is the first thing worth a look (decision 22).
+    expect(attention({ ...ok, patching: { urgent: { pending: [{ name: "openssl", cves: [] }] } } }))
+      .toEqual([["down", "1 urgent security fix"]]);
   });
   it("puts each guest under its Proxmox server", () => {
     const pve = { name: "butts-infra", report: { proxmox: { guests: [

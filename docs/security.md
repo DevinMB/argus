@@ -26,6 +26,8 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 - **Updating Argus** (Settings, Update Argus) is done by the companion on Argus's own machine, never by Argus: Argus does not get the Docker socket. The signed reply names only a request id, an image and a Compose project; the companion refreshes that project only if it already runs that very image (so the request cannot restart anything else), pulls, recreates it, waits for Argus's health check and re-tags the previous image if the new Argus is not healthy. `"no_argus_updates": true` in that host's policy turns it off.
 - **Monitoring only** is chosen at install, on the host; such a host never deploys, patches or shares files, whatever Argus says.
 - The service runs with `ProtectSystem=strict` and writes only its own folder. Package updates run in a separate transient unit started for each patch run.
+- An urgent security run (a fix for an exploited or critical flaw, installed the same night) names its packages, and the companion installs only the names it reports as pending security updates itself. Argus cannot use it to install anything else.
+- To know which fixes are urgent, Argus itself asks two public sources that need no account: CISA's list of exploited vulnerabilities, and cve.org for the record of each CVE your hosts report as pending. Those requests carry CVE ids and nothing about your hosts. Companions make no such requests.
 - Removing a host in Argus stops its token at once.
 
 ## Deploys and adopting stacks
