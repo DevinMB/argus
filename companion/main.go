@@ -121,6 +121,7 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 	log.Info("starting", "version", version, "argus", c.URL, "name", c.Name,
 		"read_only", c.ReadOnly)
 	client, collector, checker := pinnedClient(c.Pin), newCollector(), newChecker()
+	collector.changelogs.keepIn(filepath.Join(stateDir, "changelogs.json"))
 	patcher := newPatcher(stateDir, collector)
 	updater := newUpdater(client, c.URL, stateDir)
 	guests := newGuestInstaller()

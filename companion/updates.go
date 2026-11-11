@@ -3,6 +3,7 @@ package main
 import (
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -232,6 +233,57 @@ type Changelogs struct {
 	notes  map[string]string      // what the entry says
 	busy   bool
 	fetch  func(pkg, version string) (string, error)
+	// Where what was learned is kept, so a restart (an update of the
+	// companion itself) does not lose it for the next look. Empty: memory only.
+	path    string
+	pending map[string]bool // the keys the last fill saw: what is worth keeping
+}
+
+type changelogsFile struct {
+	Known map[string][2][]string `json:"known"`
+	Notes map[string]string      `json:"notes"`
+}
+
+// keepIn loads what an earlier run learned from path and keeps saving there.
+func (cl *Changelogs) keepIn(path string) {
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+	cl.path = path
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var f changelogsFile
+	if json.Unmarshal(b, &f) != nil {
+		return
+	}
+	for k, v := range f.Known {
+		cl.known[k] = v
+	}
+	for k, v := range f.Notes {
+		cl.notes[k] = v
+	}
+}
+
+// save writes what is known about the updates still pending (called locked).
+func (cl *Changelogs) save() {
+	if cl.path == "" {
+		return
+	}
+	f := changelogsFile{Known: map[string][2][]string{}, Notes: map[string]string{}}
+	for k, v := range cl.known {
+		if cl.pending == nil || cl.pending[k] {
+			f.Known[k], f.Notes[k] = v, cl.notes[k]
+		}
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		return
+	}
+	tmp := cl.path + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, cl.path)
+	}
 }
 
 const changelogsPerLook = 15
@@ -340,12 +392,14 @@ func (cl *Changelogs) fill(c *Collector, pkgs []Package) []Package {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 	var todo []Package
+	cl.pending = map[string]bool{}
 	for i := range pkgs {
 		p := &pkgs[i]
 		if !p.Security {
 			continue
 		}
 		k := cl.key(c, p)
+		cl.pending[k] = true
 		if why, ok := cl.known[k]; ok {
 			p.CVEs, p.Advisories, p.Why, p.Changes = why[0], why[1], "", cl.notes[k]
 			if len(why[0]) == 0 && len(why[1]) == 0 {
@@ -398,6 +452,7 @@ func (cl *Changelogs) learn(c *Collector, todo []Package, done func()) {
 		}
 		cl.mu.Lock()
 		cl.busy = false
+		cl.save()
 		cl.mu.Unlock()
 		done()
 	}()

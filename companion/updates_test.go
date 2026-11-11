@@ -100,6 +100,30 @@ func TestChangelogsAreLearnedOnceInTheBackground(t *testing.T) {
 	}
 }
 
+// What was learned survives a restart (the companion updating itself), so the
+// CVEs do not vanish from the host's card until the next download.
+func TestChangelogsAreKeptAcrossARestart(t *testing.T) {
+	c := &Collector{run: func(string, ...string) (string, int, error) { return "openssl", 0, nil }}
+	path := filepath.Join(t.TempDir(), "changelogs.json")
+	first := newChangelogs()
+	first.fetch = func(pkg, v string) (string, error) {
+		return "openssl (" + v + ") trixie-security\n  * Fix it. CVE-2026-1001\n -- x\n", nil
+	}
+	first.keepIn(path)
+	pkgs := []Package{{Name: "openssl", To: "1+deb13u1", Security: true}}
+	done := make(chan bool)
+	first.learn(c, first.fill(c, pkgs), func() { done <- true })
+	<-done
+
+	again := newChangelogs()
+	again.fetch = func(string, string) (string, error) { t.Fatal("downloaded again"); return "", nil }
+	again.keepIn(path)
+	pkgs = []Package{{Name: "openssl", To: "1+deb13u1", Security: true}}
+	if todo := again.fill(c, pkgs); len(todo) != 0 || !reflect.DeepEqual(pkgs[0].CVEs, []string{"CVE-2026-1001"}) {
+		t.Fatalf("todo %+v pkgs %+v", todo, pkgs)
+	}
+}
+
 // A security update whose changelog cannot be read says so, and one whose
 // changelog names nothing says that, instead of promising an advisory.
 func TestChangelogsSayWhyNothingShows(t *testing.T) {
