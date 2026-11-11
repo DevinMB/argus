@@ -220,7 +220,17 @@ func changelogWhy(text string) (cves, advisories []string) {
 		entry = append(entry, line)
 	}
 	body := strings.Join(entry, "\n")
-	return uniq(cveRe.FindAllString(body, -1)), uniq(advisoryRe.FindAllString(body, -1))
+	return atMost(uniq(cveRe.FindAllString(body, -1)), maxCVEs), atMost(uniq(advisoryRe.FindAllString(body, -1)), maxAdvisories)
+}
+
+// As many as Argus takes for one update (a kernel can close hundreds of CVEs).
+const maxCVEs, maxAdvisories = 500, 100
+
+func atMost(xs []string, n int) []string {
+	if len(xs) > n {
+		return xs[:n]
+	}
+	return xs
 }
 
 // Changelogs is a cache of what each source package's new version fixes. A
