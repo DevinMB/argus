@@ -1033,3 +1033,4 @@ a.tag-link:hover { filter: brightness(1.25); text-decoration: underline; }
 .start-compact .start-links { display: flex; gap: 14px; }
 .start-head .link-button ~ .link-button { margin-left: 0; }
 .urgent-rule { display: grid; gap: 12px; max-width: 760px; }
+.image-behind { margin-left: 8px; font-family: var(--sans); }

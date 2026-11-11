@@ -125,7 +125,9 @@ def report(c: Client, token: str, name: str, h: dict) -> None:
     containers = [{"name": n, "image": img, "state": "running", "health": health,
                    "status": "Up 3 days" + (f" ({health})" if health else ""), "project": proj,
                    "ports": ports, "working_dir": f"/srv/stacks/{proj}" if proj else "",
-                   "config_files": [f"/srv/stacks/{proj}/compose.yml"] if proj else []}
+                   "config_files": [f"/srv/stacks/{proj}/compose.yml"] if proj else [],
+                   # One container on an older image than its registry serves now.
+                   "image_digests": ["sha256:" + "0" * 64] if n == "syncthing" else []}
                   for n, img, health, proj, ports in h["containers"]]
     pending, security = h["updates"]
     now = time.localtime()

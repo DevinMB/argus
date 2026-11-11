@@ -51,6 +51,7 @@ from argus.auth import COOKIE, SESSION_DAYS, Auth, AuthError, Session
 from argus.companions import REPORT_EVERY, EnrollError, Signer, name_from
 from argus.deploys import BRANCH, DEPENDABOT, ENV_KEY, PULL_TOKEN, STACK, WRITE_TOKEN, Deploys
 from argus.guests import GIVE_UP, GuestInstalls
+from argus.images import Images
 from argus.metrics import registry
 from argus.patching import REQUEST, Patching
 from argus.probes import Result
@@ -282,6 +283,9 @@ class Container(BaseModel):
     local_ports: list[int] = Field([], max_length=100)  # of those, on loopback only
     working_dir: str = Field("", max_length=500)  # its Compose project's folder
     config_files: list[str] = Field([], max_length=20)
+    # The registry digests of the image it runs, for "a newer image is out".
+    image_digests: list[Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]] = Field(
+        [], max_length=10)
 
 
 class Disk(BaseModel):
@@ -616,6 +620,11 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                      for p in ((v["report"] or {}).get("updates") or {}).get("packages") or []
                      if p.get("security") for c in p.get("cves") or []})
         alerter.gh, alerter.urgent = gh, app.state.urgent
+        app.state.images = Images(
+            rt.store.db, client, rt.clock,
+            lambda: {c.get("image", "") for v in rt.companions.views()
+                     for c in (v["report"] or {}).get("containers") or []
+                     if c.get("image_digests")})
         app.state.adoption = Adoption(settings, deploys, rt.clock)
         app.state.guests = GuestInstalls(rt.clock)
         app.state.uninstalls = Uninstalls(settings, rt.clock)
@@ -631,6 +640,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             tasks.append(asyncio.create_task(app.state.configsrc.run_forever()))
             tasks.append(asyncio.create_task(app.state.selfupdate.run_forever()))
             tasks.append(asyncio.create_task(app.state.urgent.run_forever()))
+            tasks.append(asyncio.create_task(app.state.images.run_forever()))
             tasks.append(asyncio.create_task(github.run_forever(
                 gh, lambda: rt.config, lambda: set(settings.get(ghauth.HIDDEN, [])))))
         yield
@@ -1371,6 +1381,10 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             v["adoptable"] = [] if v["read_only"] else request.app.state.adoption.projects(v)
             v["guest_installs"] = request.app.state.guests.view(v["name"])
             v["companion_stale"] = companion_stale(request, v)
+            # Containers whose registry now serves a newer image under their tag.
+            v["images_behind"] = sorted(
+                c["name"] for c in (v["report"] or {}).get("containers") or []
+                if request.app.state.images.behind(c.get("image", ""), c.get("image_digests")))
             v["uninstall"] = request.app.state.uninstalls.view(v["id"])
         named = {c.companion for c in r.config.checks if c.companion}
         return {"companions": views, "backups": backups,

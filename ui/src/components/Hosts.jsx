@@ -161,7 +161,8 @@ function Containers({ list, host, session, reload }) {
               <span className={`dot dot-${tone}`} />
               <span className="host-item">{c.name}</span>
               <span className={`st-${tone} host-note`}>{off ? `ignored, ${c.health || c.state}` : c.health || c.state}</span>
-              <span className="muted host-sub mono">{c.image}</span>
+              <span className="muted host-sub mono">{c.image}
+                {(host.images_behind ?? []).includes(c.name) && <span className="tag tag-failing image-behind">newer image out</span>}</span>
               {session?.signed_in && (off || containerTrouble(c)) && (
                 <button className="btn btn-small" onClick={() => toggle(c.name, !off)}>
                   {off ? "Stop ignoring" : "Ignore"}
@@ -1407,7 +1408,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
       <div className="hd-body">
         {current === "overview" && <Overview host={host} suggestions={suggestions} session={session} reload={reload} updateCommand={updateCommand} hosts={hosts} />}
         {current === "containers" && (
-          <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never alert you.">
+          <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never alert you. Newer image out means the registry now serves a newer image under this container's tag than the one it runs; pull it (docker compose pull, then docker compose up -d, in its folder) or let its next deploy do so. A tag that names one exact version never moves, so it never shows this.">
             {r.containers.length ? <Containers list={r.containers} host={host} session={session} reload={reload} />
               : <p className="muted small">Docker runs, with no containers.</p>}
             {r.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
