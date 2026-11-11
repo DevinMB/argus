@@ -4,18 +4,20 @@
 
 Argus checks your services and alerts you when one stops answering. A small companion on each host shows its containers, disks and pending updates, patches it in a weekly window once it has a recent backup, and deploys your Compose stacks from git when you merge. No Prometheus, Grafana or Alertmanager needed, and no config files unless you want them.
 
-![The Argus home page: checks, a ring of their status, and the getting-started checklist](docs/screenshots/home.png)
+![The Argus home page: a ring of every check, one of them down, and the services Argus suggests watching](docs/screenshots/home.png)
 
 ## What it does
 
 - **Watches** anything with a URL, a port or an address, every minute; three failures in a row and it alerts you on Telegram (or hands off to your Prometheus). Pause one you already know is down.
-- **Knows your hosts.** One command adds a host; Argus then shows its containers, disks, failed services and pending updates, and suggests a check for every port its containers publish.
+- **Knows your hosts.** One command adds a host; Argus then shows its containers, disks, failed services and pending updates, with the severity score of each CVE an update fixes; it says when a container runs an older image than its tag now points at, and suggests a check for every port its containers publish.
 - **Patches** each host on the weekly schedule you choose, one host at a time, once it has a backup Argus can see. You decide how recent that backup must be, how far updates go, and whether it may reboot. A fix for a flaw that is being exploited or is rated critical does not wait for the window: it goes in that night. Already patching a host another way? Tell Argus and it leaves that host alone.
 - **Deploys from git.** Keep each host's Compose stacks in a repo; a merge deploys them, a stack that does not come up healthy is rolled back, and stacks already running can be adopted in place with one button.
 - **Follows your apps' updates** on GitHub: Dependabot's PRs, CI, merges and builds, to "running on its host".
 - **Guides you in.** A new install opens on a short checklist that takes you from nothing to your first host watched, patched and deploying.
 
 ![Hosts: what needs a look on each, and when it is patched](docs/screenshots/hosts.png)
+
+![One host: its disks and pending security updates, each CVE with its severity score, and one fix marked as being exploited](docs/screenshots/host.png)
 
 ## Quick start
 
