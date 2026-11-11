@@ -86,6 +86,14 @@ class Patching:
         self.db.executescript(SCHEMA)
         # Why a host's window passed without a run, for the page and the alert.
         self.skipped: dict[str, str] = {}
+        # The local date each skip happened on: its alert lasts that day only.
+        # A missed window is news once, not a reminder every few hours all week
+        # (the page keeps saying it until the next run).
+        self.skipped_on: dict[str, str] = {}
+        # The local date a host was seen waiting inside its window. Only then can
+        # its turn have "not come": a plan saved after the day's window closed
+        # (or a host that only came back later) missed nothing to other hosts.
+        self.waited: dict[str, str] = {}
         # Why an urgent fix could not go in that night, the same way.
         self.urgent_skipped: dict[str, str] = {}
         self.urgent = None  # argus.urgent.Urgent, set by the app
@@ -103,6 +111,8 @@ class Patching:
         self.settings.set(SETTINGS + host, None)
         self.settings.set(REQUEST + host, None)
         self.skipped.pop(host, None)
+        self.skipped_on.pop(host, None)
+        self.waited.pop(host, None)
         self.urgent_skipped.pop(host, None)
         with self.db:
             self.db.execute("DELETE FROM patch_runs WHERE host = ?", (host,))
@@ -113,8 +123,9 @@ class Patching:
         for key in (SETTINGS, REQUEST):
             self.settings.set(key + new, self.settings.get(key + old))
             self.settings.set(key + old, None)
-        if old in self.skipped:
-            self.skipped[new] = self.skipped.pop(old)
+        for m in (self.skipped, self.skipped_on, self.waited):
+            if old in m:
+                m[new] = m.pop(old)
         with self.db:
             self.db.execute("UPDATE patch_runs SET host = ? WHERE host = ?", (new, old))
         keys = [r[0] for r in self.db.execute("SELECT key FROM settings WHERE key LIKE ?",
@@ -287,6 +298,11 @@ class Patching:
                 " summary = 'no result from the host for two hours' WHERE result IN"
                 " ('granted', 'running') AND requested < ?", (self.clock(), self.clock() - STUCK))
 
+    def _skip(self, host: str, why: str, date: str) -> None:
+        if self.skipped.get(host) != why:
+            self.skipped_on[host] = date
+        self.skipped[host] = why
+
     def grant(self, host: str, read_only: bool, report: dict | None) -> dict | None:
         """A run for this host now, or None. Records why a due window was skipped."""
         self.expire()
@@ -304,10 +320,14 @@ class Patching:
         done_today = self.db.execute(
             "SELECT 1 FROM patch_runs WHERE host = ? AND local_date = ? AND trigger = 'window'",
             (host, local["date"])).fetchone()
+        if p["enabled"] and in_window:
+            self.waited[host] = local["date"]
         if (p["enabled"] and not manual and not done_today and weekday == p["day"]
-                and minute >= start + WINDOW // 60 and host not in self.skipped):
-            # Its turn never came: other hosts took the whole window. Say so.
-            self.skipped[host] = "its window ended before its turn came (other hosts took it)"
+                and minute >= start + WINDOW // 60 and host not in self.skipped
+                and self.waited.get(host) == local["date"]):
+            # It waited all window and its turn never came: other hosts took it.
+            self._skip(host, "its window ended before its turn came (other hosts took it)",
+                       local["date"])
         if not (manual or (p["enabled"] and in_window)):
             return self._urgent_grant(host, p, report, local, weekday, minute, start)
         if not manual and done_today:
@@ -315,7 +335,7 @@ class Patching:
         safety = self.safety(host, report)
         why = self._blocked(host, p, safety)
         if why:
-            self.skipped[host] = why
+            self._skip(host, why, local["date"])
             if manual:
                 self.settings.set(REQUEST + host, None)
             return None
@@ -451,7 +471,8 @@ class Patching:
             if last and last[0]["result"] == "failed":
                 out.append((f"patch:{h}", f"patching {h} failed",
                             last[0]["summary"] or "See the Hosts page."))
-            if h in self.skipped:
+            today = ((self.rt.companions.report_of(h) or {}).get("local") or {}).get("date")
+            if h in self.skipped and self.skipped_on.get(h) == today:
                 out.append((f"patch-skipped:{h}", f"{h} was not patched",
                             f"Its window passed: {self.skipped[h]}."))
             if h in self.urgent_skipped:
