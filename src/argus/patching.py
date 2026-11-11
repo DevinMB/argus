@@ -432,7 +432,10 @@ class Patching:
         runs = self.runs(host)
         urgent = {"pending": self.urgent_pending(host, report),
                   "skipped": self.urgent_skipped.get(host),
-                  "data": self.urgent.status() if self.urgent is not None else None}
+                  "data": self.urgent.status() if self.urgent is not None else None,
+                  "scores": self.urgent.scores_of(
+                      ((report or {}).get("updates") or {}).get("packages") or [])
+                  if self.urgent is not None else {}}
         return {"plan": p, "safety": safety, "runs": runs, "elsewhere": self.elsewhere(p),
                 "urgent": urgent,
                 "suggested_backup": self.suggest(host, report, backups or []),

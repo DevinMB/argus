@@ -99,6 +99,12 @@ class Urgent:
                 out.append({"name": p["name"], "cves": cves, "vendor": vendor})
         return out
 
+    def scores_of(self, packages: list[dict]) -> dict[str, float]:
+        """The CVSS base score of each CVE these updates fix, where known, so a
+        person can see how serious each one is (not only the urgent ones)."""
+        return {c: score for p in packages or [] for c in p.get("cves") or []
+                if (score := self.scores.get(c, (None, 0))[0]) is not None}
+
     @staticmethod
     def reason(urgent: list[dict]) -> str:
         """One line for a message: the packages and why they could not wait."""

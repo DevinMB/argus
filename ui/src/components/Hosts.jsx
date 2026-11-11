@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
-import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, diskTone, guestHostName, hostSentence, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
+import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
@@ -1201,9 +1201,14 @@ function FailedUnits({ host, session, reload }) {
 
 // Each pending update and, for a security one, why: its advisories and CVEs,
 // linked to the distro's own pages (design: the distro's sources only).
-function PackageList({ packages, os, pending, urgent = [] }) {
+function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
   const [all, setAll] = useState(false);
   const hot = Object.fromEntries(urgent.map((u) => [u.name, u]));
+  // The worst CVSS score among the CVEs an update fixes, for its tag.
+  const worst = (p) => {
+    const known = (p.cves ?? []).map((id) => scores?.[id]).filter((x) => typeof x === "number");
+    return known.length ? cvss(Math.max(...known)) : null;
+  };
   const sec = packages.filter((p) => p.security);
   const shown = all ? packages : sec.length ? sec : packages.slice(0, 8);
   const more = packages.length - shown.length;
@@ -1217,8 +1222,14 @@ function PackageList({ packages, os, pending, urgent = [] }) {
             {(p.advisories?.length > 0 || p.cves?.length > 0) && (
               <span className="row-sub why">{[...(p.advisories ?? []), ...(p.cves ?? [])].map((id) => {
                 const url = advisoryUrl(id, os);
-                return url ? <a key={id} className="mono" href={url} target="_blank" rel="noreferrer">{id}</a>
-                  : <span key={id} className="mono">{id}</span>;
+                const sev = cvss(scores?.[id]);
+                return (
+                  <span key={id} className="cve">
+                    {url ? <a className="mono" href={url} target="_blank" rel="noreferrer">{id}</a>
+                      : <span className="mono">{id}</span>}
+                    {sev && <span className={`cvss cvss-${sev.tone}`} title={`CVSS base score ${sev.score} of 10 (${sev.band})`}>{sev.score}</span>}
+                  </span>
+                );
               })}</span>
             )}
             {p.security && !p.advisories?.length && !p.cves?.length && (
@@ -1227,10 +1238,15 @@ function PackageList({ packages, os, pending, urgent = [] }) {
                 : "security update; its advisory shows here within the hour"}</span>
             )}
             {p.changes && <span className="row-sub small pkg-changes">{p.changes}</span>}</span>
-          <span className="row-note small">{hot[p.name]
-            ? <span className="tag tag-down" title={urgentWhy(hot[p.name])}>{hot[p.name].cves.some((c) => c.why === "exploited") ? "being exploited" : "critical"}</span>
-            : p.security ? <span className={`tag tag-${p.severity === "Critical" || p.severity === "Important" ? "down" : "failing"}`}>
-              {p.severity ? `${p.severity.toLowerCase()} security` : "security"}</span> : null}</span>
+          <span className="row-note small pkg-tags">
+            {hot[p.name]?.cves.some((c) => c.why === "exploited") && (
+              <span className="tag tag-down" title={urgentWhy(hot[p.name])}>being exploited</span>)}
+            {p.security && worst(p)
+              ? <span className={`tag tag-${worst(p).tone}`} title="The highest CVSS base score, out of 10, among the flaws this update fixes">{worst(p).label}</span>
+              : hot[p.name] && !hot[p.name].cves.some((c) => c.why === "exploited")
+              ? <span className="tag tag-down" title={urgentWhy(hot[p.name])}>critical</span>
+              : p.security ? <span className={`tag tag-${p.severity === "Critical" || p.severity === "Important" ? "down" : "failing"}`}>
+                {p.severity ? `${p.severity.toLowerCase()} security` : "security"}</span> : null}</span>
           <span className="row-act" />
         </li>
       ))}</ul>
@@ -1282,7 +1298,7 @@ function Overview({ host, suggestions, session, reload, updateCommand, hosts }) 
               Ubuntu releases some updates to a growing share of machines, and apt installs {r.updates.phased.length === 1 ? "it" : "them"} here when this host's turn comes. Nothing to do.
             </p>
           )}
-          {r.updates?.packages?.length > 0 && <PackageList packages={r.updates.packages} os={r.os} pending={r.updates.pending} urgent={host.patching?.urgent?.pending} />}
+          {r.updates?.packages?.length > 0 && <PackageList packages={r.updates.packages} os={r.os} pending={r.updates.pending} urgent={host.patching?.urgent?.pending} scores={host.patching?.urgent?.scores} />}
         </Section>
       )}
       {r.failed_units?.length > 0 && <FailedUnits host={host} session={session} reload={reload} />}

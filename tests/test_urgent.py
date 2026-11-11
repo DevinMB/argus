@@ -68,6 +68,18 @@ def test_a_critical_score_or_the_distros_word_is_urgent_too(env):
     assert u.reason(got) == "glibc, kernel (CVE-2027-0003 is rated critical)"
 
 
+
+def test_every_known_score_is_shown_not_only_the_urgent_ones(env):
+    c, csrf, rt, clock = env
+    u = c.app.state.urgent
+    u.scores = {"CVE-2027-0003": (9.8, clock.now), "CVE-2027-0004": (5.3, clock.now),
+                "CVE-2027-0005": (None, clock.now)}
+    assert u.scores_of([
+        {"name": "glibc", "security": True, "cves": ["CVE-2027-0003", "CVE-2027-0005"]},
+        {"name": "perl", "security": True, "cves": ["CVE-2027-0004", "CVE-2027-0009"]},
+    ]) == {"CVE-2027-0003": 9.8, "CVE-2027-0004": 5.3}
+
+
 def test_urgent_runs_keep_every_safety_rule(env):
     c, csrf, rt, clock = env
     nas = enroll(c, csrf, "nas")

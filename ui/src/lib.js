@@ -470,6 +470,15 @@ export function guestHostName(name) {
 }
 
 // What on a host needs a look, worst first, as short tags: [tone, text].
+// How serious a CVE is, from its CVSS base score (the bands CVSS itself
+// names). The tone picks the tag colour.
+export function cvss(score) {
+  if (typeof score !== "number") return null;
+  const band = score >= 9 ? "critical" : score >= 7 ? "high" : score >= 4 ? "medium" : "low";
+  const tone = band === "critical" || band === "high" ? "down" : band === "medium" ? "failing" : "quiet";
+  return { score: score.toFixed(1), band, tone, label: `${score.toFixed(1)} ${band}` };
+}
+
 export function attention(host) {
   if (host.status === "waiting") return [["unknown", "waiting for its first report"]];
   const r = host.report ?? {};
