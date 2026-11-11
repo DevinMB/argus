@@ -6,6 +6,7 @@ import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, 
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
+const FIRST_IDS = 6; // advisory and CVE ids shown per update before "and N more"
 
 export function Copy({ text }) {
   const [done, setDone] = useState(false);
@@ -161,7 +162,8 @@ function Containers({ list, host, session, reload }) {
               <span className={`dot dot-${tone}`} />
               <span className="host-item">{c.name}</span>
               <span className={`st-${tone} host-note`}>{off ? `ignored, ${c.health || c.state}` : c.health || c.state}</span>
-              <span className="muted host-sub mono">{c.image}</span>
+              <span className="muted host-sub mono">{c.image}
+                {(host.images_behind ?? []).includes(c.name) && <span className="tag tag-failing image-behind">newer image out</span>}</span>
               {session?.signed_in && (off || containerTrouble(c)) && (
                 <button className="btn btn-small" onClick={() => toggle(c.name, !off)}>
                   {off ? "Stop ignoring" : "Ignore"}
@@ -1255,6 +1257,15 @@ function FailedUnits({ host, session, reload }) {
 function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
   const [all, setAll] = useState(false);
   const hot = Object.fromEntries(urgent.map((u) => [u.name, u]));
+  // A kernel update can fix hundreds of CVEs: the worst-scored few show, the
+  // rest on request.
+  const [wide, setWide] = useState({});
+  const idCount = (p) => (p.advisories?.length ?? 0) + (p.cves?.length ?? 0);
+  const whyIds = (p) => {
+    const cves = [...(p.cves ?? [])].sort((a, b) => (scores?.[b] ?? -1) - (scores?.[a] ?? -1));
+    const ids = [...(p.advisories ?? []), ...cves];
+    return wide[p.name] ? ids : ids.slice(0, FIRST_IDS);
+  };
   // The worst CVSS score among the CVEs an update fixes, for its tag.
   const worst = (p) => {
     const known = (p.cves ?? []).map((id) => scores?.[id]).filter((x) => typeof x === "number");
@@ -1271,7 +1282,7 @@ function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
             {p.source && <span className="muted small"> from {p.source}</span>}
             <span className="row-sub muted mono">{p.from ? `${p.from} → ${p.to}` : `new: ${p.to}`}</span>
             {(p.advisories?.length > 0 || p.cves?.length > 0) && (
-              <span className="row-sub why">{[...(p.advisories ?? []), ...(p.cves ?? [])].map((id) => {
+              <span className="row-sub why">{whyIds(p).map((id) => {
                 const url = advisoryUrl(id, os);
                 const sev = cvss(scores?.[id]);
                 return (
@@ -1281,7 +1292,9 @@ function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
                     {sev && <span className={`cvss cvss-${sev.tone}`} title={`CVSS base score ${sev.score} of 10 (${sev.band})`} aria-label={`CVSS ${sev.score}, ${sev.band}`}>{sev.score}</span>}
                   </span>
                 );
-              })}</span>
+              })}
+                {idCount(p) > FIRST_IDS && !wide[p.name] && (
+                  <button className="link-button" onClick={() => setWide({ ...wide, [p.name]: true })}>and {idCount(p) - FIRST_IDS} more</button>)}</span>
             )}
             {p.security && !p.advisories?.length && !p.cves?.length && (
               <span className="row-sub muted small">{p.why === "none" ? "Shipped as a security update, but its changelog names no CVE or advisory."
@@ -1407,7 +1420,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
       <div className="hd-body">
         {current === "overview" && <Overview host={host} suggestions={suggestions} session={session} reload={reload} updateCommand={updateCommand} hosts={hosts} />}
         {current === "containers" && (
-          <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never alert you.">
+          <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never alert you. Newer image out means the registry now serves a newer image under this container's tag than the one it runs; pull it (docker compose pull, then docker compose up -d, in its folder) or let its next deploy do so. A tag that names one exact version never moves, so it never shows this.">
             {r.containers.length ? <Containers list={r.containers} host={host} session={session} reload={reload} />
               : <p className="muted small">Docker runs, with no containers.</p>}
             {r.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}

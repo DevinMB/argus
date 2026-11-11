@@ -177,17 +177,25 @@ func TestDockerOverItsSocket(t *testing.T) {
 		t.Skip("no unix sockets here:", err)
 	}
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/images/sha256:aa/json" {
+			_, _ = io.WriteString(w, `{"RepoDigests":["postgres@sha256:`+strings.Repeat("1", 64)+`","nonsense"]}`)
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/containers/json" {
 			w.WriteHeader(http.StatusTeapot) // the companion only ever reads
 			return
 		}
-		_, _ = io.WriteString(w, `[{"Names":["/db"],"State":"running","Status":"Up 1 minute (health: starting)"}]`)
+		_, _ = io.WriteString(w, `[{"Names":["/db"],"ImageID":"sha256:aa","State":"running","Status":"Up 1 minute (health: starting)"}]`)
 	})}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	got, err := dockerContainers(sock)
 	if err != nil || len(got) != 1 || got[0].Health != "starting" {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+	// The image's registry digest comes along, for "a newer image is out".
+	if !reflect.DeepEqual(got[0].ImageDigests, []string{"sha256:" + strings.Repeat("1", 64)}) {
+		t.Fatalf("digests %+v", got[0].ImageDigests)
 	}
 }
 

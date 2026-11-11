@@ -9,8 +9,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -65,6 +67,10 @@ type Container struct {
 	// Where Compose started it from: the project's folder and its compose files.
 	WorkingDir  string   `json:"working_dir,omitempty"`
 	ConfigFiles []string `json:"config_files,omitempty"`
+	// The registry digests of the image it runs (sha256:...), so Argus can tell
+	// when the registry has a newer image under the same tag.
+	ImageDigests []string `json:"image_digests,omitempty"`
+	imageID      string
 }
 
 type Disk struct {
@@ -236,17 +242,69 @@ func dockerContainers(socket string) ([]Container, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("docker said HTTP %d", resp.StatusCode)
 	}
-	return parseContainers(body)
+	out, err := parseContainers(body)
+	for i := range out {
+		out[i].ImageDigests = imageDigests(client, out[i].imageID)
+	}
+	return out, err
+}
+
+// An image's registry digests never change, so each is asked for once.
+var (
+	digestMu    sync.Mutex
+	digestCache = map[string][]string{}
+)
+
+var digestRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// imageDigests reads an image's RepoDigests ("repo@sha256:...") and returns the
+// digests. Nothing when it has none (an image built on the host) or on any error.
+func imageDigests(client *http.Client, id string) []string {
+	if id == "" {
+		return nil
+	}
+	digestMu.Lock()
+	got, ok := digestCache[id]
+	digestMu.Unlock()
+	if ok {
+		return got
+	}
+	resp, err := client.Get("http://docker/images/" + url.PathEscape(id) + "/json")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var img struct{ RepoDigests []string }
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&img) != nil {
+		return nil
+	}
+	out := []string{}
+	for _, d := range img.RepoDigests {
+		if i := strings.LastIndex(d, "@"); i >= 0 && digestRe.MatchString(d[i+1:]) && !slices.Contains(out, d[i+1:]) && len(out) < 10 {
+			out = append(out, d[i+1:])
+		}
+	}
+	digestMu.Lock()
+	if len(digestCache) > 2000 {
+		digestCache = map[string][]string{}
+	}
+	digestCache[id] = out
+	digestMu.Unlock()
+	return out
 }
 
 func parseContainers(body []byte) ([]Container, error) {
 	var raw []struct {
-		Names  []string
-		Image  string
-		State  string
-		Status string
-		Labels map[string]string
-		Ports  []struct {
+		Names   []string
+		Image   string
+		ImageID string
+		State   string
+		Status  string
+		Labels  map[string]string
+		Ports   []struct {
 			IP         string
 			PublicPort int
 			Type       string
@@ -284,7 +342,8 @@ func parseContainers(body []byte) ([]Container, error) {
 			Health: healthOf(c.Status), Status: c.Status,
 			Project: c.Labels["com.docker.compose.project"], Ports: ports, LocalPorts: local,
 			WorkingDir:  c.Labels["com.docker.compose.project.working_dir"],
-			ConfigFiles: splitNonEmpty(c.Labels["com.docker.compose.project.config_files"], ",")})
+			ConfigFiles: splitNonEmpty(c.Labels["com.docker.compose.project.config_files"], ","),
+			imageID:     c.ImageID})
 	}
 	return out, nil
 }

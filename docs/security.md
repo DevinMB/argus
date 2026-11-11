@@ -28,6 +28,7 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 - The service runs with `ProtectSystem=strict` and writes only its own folder. Package updates run in a separate transient unit started for each patch run.
 - An urgent security run (a fix for an exploited or critical flaw, installed the same night) names its packages, and the companion installs only the names it reports as pending security updates itself. Argus cannot use it to install anything else.
 - To know which fixes are urgent, Argus itself asks two public sources that need no account: CISA's list of exploited vulnerabilities, and cve.org for the record of each CVE your hosts report as pending. Those requests carry CVE ids and nothing about your hosts. Companions make no such requests.
+- To know when a container runs an older image than its tag now points at, Argus asks the image's registry for that tag's current digest, without an account and without pulling anything. Only well-known public registries are asked (Docker Hub, ghcr.io, quay.io, lscr.io, gcr.io, mcr.microsoft.com, public.ecr.aws, registry.gitlab.com, codeberg.org, docker.elastic.co, registry.k8s.io): an image from any other registry, a private image, and one pinned by digest are left alone. The request carries the image's name and tag, as a pull would.
 - Removing a host in Argus stops its token at once.
 
 ## Deploys and adopting stacks
