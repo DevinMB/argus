@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
 import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
@@ -1056,12 +1056,43 @@ function UninstallState({ host, session, reload, onRetry }) {
   );
 }
 
-// The everyday actions sit under the host's name; Uninstall and Remove, which
-// end Argus's care of it, wait at the foot of its Overview (part "leave").
-function HostActions({ host, session, reload, hosts, updateCommand, part = "top" }) {
-  const [mode, setMode] = useState(null);
+// What is done to a host now and then (rename it, reinstall, uninstall or
+// remove it) sits behind one Manage button by its name, so the tabs people use
+// every day come first and these are still one press away.
+function ManageMenu({ host, session, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  if (!session?.signed_in || host.uninstall) return null;
+  const pick = (m) => { setOpen(false); onPick(m); };
+  return (
+    <span className="manage" ref={ref}>
+      <button className="btn btn-small" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>Manage ▾</button>
+      {open && (
+        <span className="manage-menu" role="menu">
+          <button role="menuitem" onClick={() => pick("rename")}>Rename<small>Its plan, history and deploys come along</small></button>
+          {!host.read_only && <button role="menuitem" onClick={() => pick("reinstall")}>Reinstall companion<small>The command to run on the host again</small></button>}
+          <hr />
+          {!host.read_only && <button role="menuitem" className="danger" onClick={() => pick("uninstall")}>Uninstall<small>Take the companion off and hand its stacks back</small></button>}
+          <button role="menuitem" className="danger" onClick={() => pick("remove")}>Remove<small>Forget a host that is gone</small></button>
+        </span>
+      )}
+    </span>
+  );
+}
+
+// The form for what was picked in Manage, under the host's details.
+function HostActions({ host, session, reload, hosts, updateCommand, mode, setMode }) {
   const [name, setName] = useState(host.name);
   const [error, setError] = useState(null);
+  useEffect(() => { setName(host.name); setError(null); }, [mode, host.name]);
   if (!session?.signed_in) return null;
   const rename = async (e) => {
     e.preventDefault();
@@ -1083,35 +1114,9 @@ function HostActions({ host, session, reload, hosts, updateCommand, part = "top"
       setError(e.message);
     }
   };
-  if (part === "leave") {
-    if (host.uninstall) return null;
-    return (
-      <section className="host-leave">
-        {!mode && <p className="small muted">
-          Done with {host.name}?{" "}
-          {!host.read_only && <><button className="link-button" onClick={() => setMode("uninstall")}>Uninstall</button> takes the companion off it and hands its stacks back. </>}
-          <button className="link-button" onClick={() => setMode("remove")}>Remove</button> forgets a host that is gone.
-        </p>}
-        {mode === "uninstall" && <Uninstall host={host} session={session} reload={reload} onClose={() => setMode(null)} />}
-        {mode === "remove" && (
-          <span className="inline-form small">
-            Forget {host.name} without uninstalling, for a host that is gone? Its token stops working at once. If the
-            program is still on it, run <code>sudo /usr/local/bin/argus-companion uninstall</code> there{host.read_only ? "" : ", or use Uninstall instead"}.
-            <button className="btn btn-small" onClick={remove}>Remove</button>
-            <button className="btn btn-small" onClick={() => setMode(null)}>Keep</button>
-          </span>
-        )}
-        {error && <p className="form-error" role="alert">{error}</p>}
-      </section>
-    );
-  }
   return (
     <div className="host-actions">
       <UninstallState host={host} session={session} reload={reload} onRetry={() => setMode("uninstall")} />
-      {!mode && !host.uninstall && <>
-        <button className="btn btn-small" onClick={() => { setName(host.name); setMode("rename"); }}>Rename</button>
-        {!host.read_only && <button className="btn btn-small" onClick={() => setMode("reinstall")}>Reinstall companion</button>}
-      </>}
       {mode === "uninstall" && <Uninstall host={host} session={session} reload={reload} onClose={() => setMode(null)} />}
       {mode === "reinstall" && <Reinstall host={host} hosts={hosts} session={session} updateCommand={updateCommand} onClose={() => setMode(null)} />}
       {mode === "rename" && (
@@ -1122,6 +1127,14 @@ function HostActions({ host, session, reload, hosts, updateCommand, part = "top"
           <button type="button" className="btn btn-small" onClick={() => setMode(null)}>Cancel</button>
           <small className="muted">Its patch schedule and history come along. Deploys follow the new name (hosts/&lt;name&gt; in your deploy repo).</small>
         </form>
+      )}
+      {mode === "remove" && (
+        <span className="inline-form small">
+          Forget {host.name} without uninstalling, for a host that is gone? Its token stops working at once. If the
+          program is still on it, run <code>sudo /usr/local/bin/argus-companion uninstall</code> there{host.read_only ? "" : ", or use Uninstall instead"}.
+          <button className="btn btn-small" onClick={remove}>Remove</button>
+          <button className="btn btn-small" onClick={() => setMode(null)}>Keep</button>
+        </span>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
     </div>
@@ -1335,6 +1348,8 @@ function Overview({ host, suggestions, session, reload, updateCommand, hosts }) 
 
 function HostDetail({ host, tab, session, reload, refs, backups, hostNames, suggestions, updateCommand, hosts }) {
   const r = host.report ?? {};
+  const [manage, setManage] = useState(null);
+  useEffect(() => setManage(null), [host.id]);
   const [tone, word] = STATUS[host.status];
   const tabs = [["overview", "Overview"]];
   if (r.containers) tabs.push(["containers", `Containers (${r.containers.length})`]);
@@ -1350,6 +1365,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
         <h1>{host.name}</h1>
         <span className={`st-${tone}`}>{word}</span>
         {host.read_only && <span className="chip">monitoring only</span>}
+        <ManageMenu host={host} session={session} onPick={setManage} />
         <span className="muted small hd-seen">{host.last_seen ? `reported ${agoText(host.age)}` : "waiting for its first report"}</span>
       </header>
       {host.report && <>
@@ -1358,17 +1374,14 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
         <p className="muted hd-build">{[r.kernel && `kernel ${r.kernel}`, r.arch,
           r.version && `companion ${r.version.replace(/\+([0-9a-f]{7})[0-9a-f]*$/, "+$1")}`].filter(Boolean).join(" · ")}</p>
       </>}
-      <HostActions host={host} session={session} reload={reload} hosts={hosts} updateCommand={updateCommand} />
+      <HostActions host={host} session={session} reload={reload} hosts={hosts} updateCommand={updateCommand} mode={manage} setMode={setManage} />
       <nav className="subtabs hd-tabs">
         {tabs.map(([k, label]) => (
           <a key={k} href={`#/hosts?host=${encodeURIComponent(host.name)}&tab=${k}`} aria-current={k === current ? "page" : undefined}>{label}</a>
         ))}
       </nav>
       <div className="hd-body">
-        {current === "overview" && <>
-          <Overview host={host} suggestions={suggestions} session={session} reload={reload} updateCommand={updateCommand} hosts={hosts} />
-          <HostActions host={host} session={session} reload={reload} hosts={hosts} updateCommand={updateCommand} part="leave" />
-        </>}
+        {current === "overview" && <Overview host={host} suggestions={suggestions} session={session} reload={reload} updateCommand={updateCommand} hosts={hosts} />}
         {current === "containers" && (
           <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never page.">
             {r.containers.length ? <Containers list={r.containers} host={host} session={session} reload={reload} />

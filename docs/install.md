@@ -57,7 +57,7 @@ A host is named after its hostname. When that name is no good (two Proxmox serve
 
 ### Uninstall a host
 
-At the foot of the host's Overview, press **Uninstall** and enter the admin password twice. On its next report the companion hands back every stack Argus created as a plain Compose folder in `/opt/stacks/<name>`, with its `.env`, leaving the running containers alone. Then it removes itself: the service, `/usr/local/bin/argus-companion`, `/etc/argus-companion` and `/var/lib/argus-companion`. Argus forgets the host once the companion reports that it is done. Stacks Argus took over in place were never moved and stay where they are.
+On the host's page, open **Manage**, choose **Uninstall** and enter the admin password twice. On its next report the companion hands back every stack Argus created as a plain Compose folder in `/opt/stacks/<name>`, with its `.env`, leaving the running containers alone. Then it removes itself: the service, `/usr/local/bin/argus-companion`, `/etc/argus-companion` and `/var/lib/argus-companion`. Argus forgets the host once the companion reports that it is done. Stacks Argus took over in place were never moved and stay where they are.
 
 A host that is offline gets the command to run on it instead:
 
@@ -65,7 +65,7 @@ A host that is offline gets the command to run on it instead:
 sudo /usr/local/bin/argus-companion uninstall
 ```
 
-**Remove** only forgets the host (its token stops working at once) and is for a host that is gone for good.
+**Remove**, also under **Manage**, only forgets the host (its token stops working at once) and is for a host that is gone for good.
 
 Add the host again later and its handed-back stacks are taken over where they are. It joins as a new host, without its old patch plan.
 
