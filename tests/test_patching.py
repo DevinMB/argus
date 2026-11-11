@@ -286,13 +286,37 @@ def test_one_proxmox_server_waits_while_the_others_last_run_failed(env):
 
 def test_a_guest_that_never_got_its_turn_says_so(env):
     c, csrf, rt, clock = env
+    tok, other = enroll(c, csrf, "lab"), enroll(c, csrf, "nas")
+    for h in ("lab", "nas"):
+        c.put(f"/api/patching/{h}", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
+    job_ok(c, rt, clock, "nas-backup")
+    assert "patch" in report(c, other, local=TUE_0305)  # nas takes the window...
+    assert "patch" not in report(c, tok, local=TUE_0305)  # ...and lab waits in it
+    late = {**TUE_0305, "time": "09:30"}  # the window (03:00 + 6 h) is over
+    assert "patch" not in report(c, tok, local=late)
+    view = next(h for h in c.get("/api/companions").json()["companions"]
+                if h["name"] == "lab")["patching"]
+    assert "window ended before its turn" in view["skipped"]
+    assert "patch-skipped:lab" in c.app.state.alerter.problems()
+    # News once, not a reminder all week: the alert ends with the day, the page keeps it.
+    report(c, tok, local={**TUE_0305, "weekday": 2, "date": "2027-01-13", "time": "08:00"})
+    assert "patch-skipped:lab" not in c.app.state.alerter.problems()
+    view = next(h for h in c.get("/api/companions").json()["companions"]
+                if h["name"] == "lab")["patching"]
+    assert "window ended before its turn" in view["skipped"]
+
+
+def test_a_plan_saved_after_the_days_window_missed_nothing(env):
+    # 2026-11-10: plans saved on a Tuesday afternoon for Tuesday 03:00 said
+    # "other hosts took it" (nothing else ran) and sent a reminder every 4 hours.
+    c, csrf, rt, clock = env
     tok = enroll(c, csrf, "lab")
     c.put("/api/patching/lab", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
     job_ok(c, rt, clock, "nas-backup")
-    late = {**TUE_0305, "time": "09:30"}  # the window (03:00 + 6 h) is over
-    assert "patch" not in report(c, tok, local=late)
+    assert "patch" not in report(c, tok, local={**TUE_0305, "time": "16:30"})
     view = c.get("/api/companions").json()["companions"][0]["patching"]
-    assert "window ended before its turn" in view["skipped"]
+    assert view["skipped"] is None
+    assert not any(k.startswith("patch-skipped") for k in c.app.state.alerter.problems())
 
 
 def test_guests_backups_do_not_cover_a_host_that_is_not_a_proxmox_server(env):
