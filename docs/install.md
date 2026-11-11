@@ -57,7 +57,7 @@ A host is named after its hostname. When that name is no good (two Proxmox serve
 
 ### Uninstall a host
 
-On the host's page, press **Uninstall** and enter the admin password twice. On its next report the companion hands back every stack Argus created as a plain Compose folder in `/opt/stacks/<name>`, with its `.env`, leaving the running containers alone. Then it removes itself: the service, `/usr/local/bin/argus-companion`, `/etc/argus-companion` and `/var/lib/argus-companion`. Argus forgets the host once the companion reports that it is done. Stacks Argus took over in place were never moved and stay where they are.
+At the foot of the host's Overview, press **Uninstall** and enter the admin password twice. On its next report the companion hands back every stack Argus created as a plain Compose folder in `/opt/stacks/<name>`, with its `.env`, leaving the running containers alone. Then it removes itself: the service, `/usr/local/bin/argus-companion`, `/etc/argus-companion` and `/var/lib/argus-companion`. Argus forgets the host once the companion reports that it is done. Stacks Argus took over in place were never moved and stay where they are.
 
 A host that is offline gets the command to run on it instead:
 
