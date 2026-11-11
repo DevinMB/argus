@@ -88,10 +88,12 @@ jobs:
             -d '{"url":"https://localhost:8080","name":"runner"}' \
             https://localhost:8080/api/companions/codes | jq -r .command)
           echo "$cmd" | grep -q -- '--pinnedpubkey sha256//'
+          # Once set up, a new install shows nothing without the password (hosts and their CVEs).
+          test "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8080/api/companions)" = 401
           # The one command, exactly as shown, on this runner (it has Docker and systemd).
           sh -c "$cmd"
           for _ in $(seq 30); do
-            curl -sk https://localhost:8080/api/companions > hosts.json
+            curl -sk -b jar https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[0].status == "ok"' hosts.json >/dev/null && break; sleep 2
           done
           if ! jq -e '.companions[0].status == "ok"' hosts.json >/dev/null; then
@@ -113,13 +115,13 @@ jobs:
           curl -s localhost:8099/ | grep 'hello from argus'
           sudo stat -c '%a' /var/lib/argus-companion/stacks/hello/.env | grep -qx 600
           for _ in $(seq 30); do
-            curl -sk https://localhost:8080/api/companions | jq -e '.companions[0].stacks[0].status == "deployed"' && break; sleep 3
+            curl -sk -b jar https://localhost:8080/api/companions | jq -e '.companions[0].stacks[0].status == "deployed"' && break; sleep 3
           done
           # The host's policy refuses a privileged stack before anything changes.
           sed -i 's/^  hello:$/  hello:\n    privileged: true/' deploy/sites/ci/hello/compose.yml
           grep -q 'privileged: true' deploy/sites/ci/hello/compose.yml
           for _ in $(seq 60); do
-            curl -sk https://localhost:8080/api/companions > hosts.json
+            curl -sk -b jar https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[0].stacks[0].status == "refused"' hosts.json >/dev/null && break; sleep 3
           done
           jq '.companions[0].stacks[0] | {status, detail}' hosts.json
@@ -143,7 +145,7 @@ jobs:
           mkdir -p deploy/sites/ci/hello2 && cp /opt/legacy/hello2/compose.yml deploy/sites/ci/hello2/
           echo sites/ci/hello2 >> deploy/hosts/runner
           for _ in $(seq 60); do
-            curl -sk https://localhost:8080/api/companions > hosts.json
+            curl -sk -b jar https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "link"' hosts.json >/dev/null && break; sleep 3
           done
           jq '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | {status, held}' hosts.json
@@ -157,7 +159,7 @@ jobs:
           jq -e '.mode == "link" and .blockers == [] and .secrets == ["GREETING"]' pv.json
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/adopt/runner/hello2
           for _ in $(seq 60); do
-            curl -sk https://localhost:8080/api/companions > hosts.json
+            curl -sk -b jar https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | .status == "deployed"' hosts.json >/dev/null && break; sleep 3
           done
           jq '.companions[0].stacks[] | select(.path == "sites/ci/hello2") | {status, detail}' hosts.json
@@ -178,7 +180,7 @@ jobs:
             https://localhost:8080/api/patching/runner
           curl -skf -b jar -H "X-CSRF-Token: $csrf" -X POST https://localhost:8080/api/patching/runner/now
           for _ in $(seq 120); do
-            curl -sk https://localhost:8080/api/companions > hosts.json
+            curl -sk -b jar https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[0].patching.runs[0].result | IN("ok", "failed")' hosts.json >/dev/null && break; sleep 5
           done
           jq '.companions[0].patching.runs[0] | {result, level, reboot, summary}' hosts.json
@@ -213,7 +215,7 @@ jobs:
           docker exec alpine sh -c 'apk add -q curl openrc && mkdir -p /run/openrc && touch /run/openrc/softlevel'
           docker exec alpine sh -c "${cmd/| sudo sh/| sh}"
           for _ in $(seq 30); do
-            curl -sk https://localhost:8080/api/companions > hosts.json
+            curl -sk -b jar https://localhost:8080/api/companions > hosts.json
             jq -e '.companions[] | select(.name == "alpine") | .status == "ok"' hosts.json >/dev/null && break; sleep 2
           done
           jq -e '.companions[] | select(.name == "alpine") | .status == "ok" and .report.updates.manager == "apk"' hosts.json \
