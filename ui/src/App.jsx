@@ -89,6 +89,13 @@ export default function App() {
   const [session, setSession] = useSession();
   const [selected, select] = useSelected();
   const [view, focus] = useView();
+  // Name the browser tab after what it shows, so several Argus tabs tell apart.
+  useEffect(() => {
+    const host = view === "hosts" && new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("host");
+    const page = { checks: "Checks", updates: "Updates", hosts: "Hosts", alerts: "Alerts", account: "Settings",
+                   github: "GitHub", config: "Config", deploy: "Deploy from git", leave: "Leave Argus" }[view];
+    document.title = [host || (view === "updates" && focus) || page, "Argus"].filter(Boolean).join(" · ");
+  });
   const [status, setStatus] = useState("all");
   const [site, setSite] = useState("all");
   const [q, setQ] = useState("");
@@ -112,7 +119,7 @@ export default function App() {
   );
   const shown = useMemo(() => filterChecks(checks, { status, site, q, sites }), [checks, status, site, q, sites]);
   const siteSum = (s) => summarize(checks.filter((c) => c.site === s));
-  // A paused check pages nobody, so it is not among them.
+  // A paused check alerts nobody, so it is not among them.
   const critical = checks.filter((c) => c.severity === "critical" && c.status !== "paused");
   const pausedCritical = checks.filter((c) => c.severity === "critical" && c.status === "paused").length;
   const stalled = data && now - data.info.last_tick > 30;
@@ -156,6 +163,18 @@ export default function App() {
       setSaved(`Not removed: ${e.message}`);
     }
   };
+
+  // A fresh install has one job: choose the password. Nothing else shows until then.
+  if (session?.setup_needed) {
+    return (
+      <div className="page">
+        <header className="top">
+          <span className="brand"><img src="/favicon.svg" alt="" width="22" height="22" /><span>ARGUS</span></span>
+        </header>
+        <SignIn session={session} onSession={setSession} />
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -265,12 +284,12 @@ export default function App() {
               </div>
             </div>
             <div className="hero-side">
-              <h1>{headline(sum)}</h1>
+              <h1>{headline(sum, summarize(critical))}</h1>
               {checks.length ? (
                 <p className="lede">
                   {checks.length} check{checks.length === 1 ? "" : "s"} in {groupChecks(checks).length} group{groupChecks(checks).length === 1 ? "" : "s"}, every
                   minute{acrossSites(siteOrder.length)}. Three failures in a row and a check is down; the ones set to
-                  alert send you a message.
+                  alert send you a message.{sum.down > 0 && !summarize(critical).down && " Nothing that alerts you is down."}
                 </p>
               ) : (
                 <p className="lede">
@@ -364,7 +383,7 @@ export default function App() {
             <section className="group">
               <h2 className="eyebrow">scheduled runs <span className="count">{data.jobs.length}</span></h2>
               <p className="group-hint">
-                {data.info.jobs_intro || "Runs that start on their own and report back here when they finish. A failed or overdue run pages."}
+                {data.info.jobs_intro || "Runs that start on their own and report back here when they finish. A failed or overdue run alerts you."}
               </p>
               <Jobs jobs={data.jobs} now={now} sites={sites} />
             </section>

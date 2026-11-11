@@ -49,7 +49,7 @@ On **Hosts**, press **Add a host**, copy the command and run it on the host. It 
 
 Tick **Monitoring only** if this host should report but never deploy or patch.
 
-A container you do not care about (a one-off job that exited, say) can be set aside with **Ignore** next to it on the host's Containers tab: it moves to the bottom and no longer counts as trouble. Stopped containers never page either way.
+A container you do not care about (a one-off job that exited, say) can be set aside with **Ignore** next to it on the host's Containers tab: it moves to the bottom and no longer counts as trouble. Stopped containers never alert you either way.
 
 On a Proxmox server, Argus lists the guests in the list under the server. **Add Argus** on a guest (or **Add Argus to all** for the running ones) has the server install the companion in that guest for you: containers always, VMs when the QEMU guest agent runs in them (`apt install qemu-guest-agent`, and **Options, QEMU Guest Agent** on in Proxmox). Each guest joins under its Proxmox name. Home Assistant OS and other appliances without a shell cannot take a companion.
 

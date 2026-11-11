@@ -230,7 +230,8 @@ def test_a_container_the_owner_does_not_care_about_can_be_ignored(client, csrf, 
     blob = backup.export(settings, tmp_path, "a long passphrase")
     rt.store.db.execute("UPDATE companions SET ignored = '[]'")
     backup.restore(settings, tmp_path, blob, "a long passphrase")
-    assert client.get("/api/companions").json()["companions"][0]["ignored"] == ["smoke"]
+    # (Read from the registry: a restore signs every browser out.)
+    assert rt.companions.views()[0]["ignored"] == ["smoke"]
 
 
 def test_add_argus_to_a_proxmox_guest_from_its_server(client, csrf, clock):

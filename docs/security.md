@@ -1,6 +1,6 @@
 # Security
 
-Argus can change your hosts: it patches them and deploys to them. This page says what it holds, how that is protected, and where the limits are. If you find a hole, please report it privately through GitHub's **Report a vulnerability** on this repo, not in an issue.
+Argus can change your hosts: it patches them and deploys to them. This page says what it holds, how that is protected, and where the limits are. If you find a hole, report it privately through GitHub's **Report a vulnerability** on this repo, not in an issue.
 
 ## What Argus holds
 
@@ -11,7 +11,7 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 ## The web UI
 
 - HTTPS from the first start. A fresh install can only be claimed with the setup code from its log.
-- Viewing is open on your network by default; one switch on the Settings, Account page requires sign-in for everything. Changing anything always needs the password.
+- Viewing needs the password by default, because the pages list each host's address and unpatched CVEs. One switch on the Settings, Account page opens viewing to your network (for a wall display, say); installs set up before 1.3 keep the choice they had, which was open. `/metrics` and the timers' reports are always open. Changing anything always needs the password.
 - Every change needs the session's CSRF token; the session cookie is HttpOnly and SameSite=Strict. Failed sign-ins are limited per address and overall.
 - A Content-Security-Policy allows only Argus's own scripts and styles, and no framing.
 - Exporting every secret (Back up Argus) asks for the password again.

@@ -4,7 +4,7 @@ import Track from "./Track.jsx";
 import { ago, agoText, ms, siteName, stamp } from "../lib.js";
 
 // Pausing: "I know it is down". The check keeps running so Argus sees it come
-// back, but it shows grey and never pages.
+// back, but it shows grey and never alerts you.
 function PauseForm({ check, csrf, onDone, onCancel }) {
   const [reason, setReason] = useState("");
   const [until, setUntil] = useState("up");
@@ -88,7 +88,7 @@ export default function CheckDrawer({ name, now, sites, csrf, onClose, onEdit, o
             {check.paused && (
               <p className="paused-note">
                 {check.paused.reason ? <>“{check.paused.reason}”. </> : null}
-                Argus still checks it (now {check.probe_status}) but it never pages
+                Argus still checks it (now {check.probe_status}) but it never alerts you
                 {check.paused.until === "up" ? ", and it resumes by itself once it is back up." : " until you resume it."}
               </p>
             )}
