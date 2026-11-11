@@ -57,15 +57,17 @@ HOSTS = {
             ("syncthing", "syncthing/syncthing:2.0", "", "", [8384]),
         ],
         "disks": [("/", 64, 21), ("/srv", 7450, 5390)],
-        "updates": (4, 1), "units": [],
+        "updates": (4, 3), "units": [],
         # One pending fix for a flaw on CISA's exploited list: Argus marks it
         # urgent and installs it the same night (design decision 22).
         "packages": [
             {"name": "sudo", "from": "1.9.16p2-3", "to": "1.9.16p2-3+deb13u1", "security": True,
              "advisories": ["DSA-5954-1"], "cves": ["CVE-2025-32463"],
              "changes": "Fix a local privilege escalation through the chroot option."},
-            {"name": "curl", "from": "8.14.1-2", "to": "8.14.1-2+deb13u2"},
-            {"name": "libcurl4t64", "from": "8.14.1-2", "to": "8.14.1-2+deb13u2"},
+            {"name": "curl", "from": "8.14.1-2", "to": "8.14.1-2+deb13u2", "security": True,
+             "source": "curl", "cves": ["CVE-2025-9086", "CVE-2025-10148"]},
+            {"name": "libcurl4t64", "from": "8.14.1-2", "to": "8.14.1-2+deb13u2", "security": True,
+             "source": "curl", "cves": ["CVE-2025-9086", "CVE-2025-10148"]},
             {"name": "tzdata", "from": "2025b-4", "to": "2025b-4+deb13u1"},
         ],
     },
