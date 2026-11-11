@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl } from "./lib.js";
+import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -432,5 +432,15 @@ describe("advisoryUrl", () => {
     expect(advisoryUrl("CVE-2026-1001", "Ubuntu 24.04.5 LTS")).toBe("https://ubuntu.com/security/CVE-2026-1001");
     expect(advisoryUrl("USN-7000-1", "Ubuntu 24.04.5 LTS")).toBe("https://ubuntu.com/security/notices/USN-7000-1");
     expect(advisoryUrl("whatever", "x")).toBe(null);
+  });
+});
+
+describe("cvss", () => {
+  it("names the band CVSS uses and colours the serious ones", () => {
+    expect(cvss(9.8)).toMatchObject({ label: "9.8 critical", tone: "down" });
+    expect(cvss(7)).toMatchObject({ label: "7.0 high", tone: "down" });
+    expect(cvss(5.3)).toMatchObject({ label: "5.3 medium", tone: "failing" });
+    expect(cvss(2.1)).toMatchObject({ label: "2.1 low", tone: "quiet" });
+    expect(cvss(undefined)).toBeNull();
   });
 });
