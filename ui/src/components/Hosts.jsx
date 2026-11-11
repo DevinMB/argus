@@ -6,6 +6,7 @@ import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, 
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
+const FIRST_IDS = 6; // advisory and CVE ids shown per update before "and N more"
 
 export function Copy({ text }) {
   const [done, setDone] = useState(false);
@@ -1256,6 +1257,15 @@ function FailedUnits({ host, session, reload }) {
 function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
   const [all, setAll] = useState(false);
   const hot = Object.fromEntries(urgent.map((u) => [u.name, u]));
+  // A kernel update can fix hundreds of CVEs: the worst-scored few show, the
+  // rest on request.
+  const [wide, setWide] = useState({});
+  const idCount = (p) => (p.advisories?.length ?? 0) + (p.cves?.length ?? 0);
+  const whyIds = (p) => {
+    const cves = [...(p.cves ?? [])].sort((a, b) => (scores?.[b] ?? -1) - (scores?.[a] ?? -1));
+    const ids = [...(p.advisories ?? []), ...cves];
+    return wide[p.name] ? ids : ids.slice(0, FIRST_IDS);
+  };
   // The worst CVSS score among the CVEs an update fixes, for its tag.
   const worst = (p) => {
     const known = (p.cves ?? []).map((id) => scores?.[id]).filter((x) => typeof x === "number");
@@ -1272,7 +1282,7 @@ function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
             {p.source && <span className="muted small"> from {p.source}</span>}
             <span className="row-sub muted mono">{p.from ? `${p.from} → ${p.to}` : `new: ${p.to}`}</span>
             {(p.advisories?.length > 0 || p.cves?.length > 0) && (
-              <span className="row-sub why">{[...(p.advisories ?? []), ...(p.cves ?? [])].map((id) => {
+              <span className="row-sub why">{whyIds(p).map((id) => {
                 const url = advisoryUrl(id, os);
                 const sev = cvss(scores?.[id]);
                 return (
@@ -1282,7 +1292,9 @@ function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
                     {sev && <span className={`cvss cvss-${sev.tone}`} title={`CVSS base score ${sev.score} of 10 (${sev.band})`} aria-label={`CVSS ${sev.score}, ${sev.band}`}>{sev.score}</span>}
                   </span>
                 );
-              })}</span>
+              })}
+                {idCount(p) > FIRST_IDS && !wide[p.name] && (
+                  <button className="link-button" onClick={() => setWide({ ...wide, [p.name]: true })}>and {idCount(p) - FIRST_IDS} more</button>)}</span>
             )}
             {p.security && !p.advisories?.length && !p.cves?.length && (
               <span className="row-sub muted small">{p.why === "none" ? "Shipped as a security update, but its changelog names no CVE or advisory."

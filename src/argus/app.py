@@ -294,6 +294,9 @@ class Disk(BaseModel):
     used: int = Field(ge=0)
 
 
+MAX_CVES, MAX_ADVISORIES = 500, 100
+
+
 class Package(BaseModel):
     """One pending update, and for a security one why, from the distro's sources."""
     name: str = Field(max_length=200)
@@ -301,13 +304,22 @@ class Package(BaseModel):
     from_: str = Field("", max_length=200, alias="from")
     security: bool = False
     source: str = Field("", max_length=200)
-    advisories: list[str] = Field([], max_length=20)
-    cves: list[str] = Field([], max_length=50)
+    advisories: list[str] = Field([], max_length=MAX_ADVISORIES)
+    cves: list[str] = Field([], max_length=MAX_CVES)
     severity: str = Field("", max_length=20)
     why: Literal["", "none", "unavailable"] = ""
     changes: str = Field("", max_length=500)
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    @field_validator("cves", "advisories", mode="before")
+    @classmethod
+    def _no_longer_than(cls, v, info):
+        # One kernel update can close hundreds of CVEs. A list longer than the
+        # limit is cut, never refused: a refused report silences the whole host
+        # (a runner with 64 CVEs on one package stopped reporting, 2026-11-11).
+        limit = MAX_CVES if info.field_name == "cves" else MAX_ADVISORIES
+        return v[:limit] if isinstance(v, list) else v
 
 
 class Updates(BaseModel):

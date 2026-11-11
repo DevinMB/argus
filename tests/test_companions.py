@@ -541,3 +541,13 @@ def test_the_install_script_never_moves_a_host_from_another_argus(tmp_path):
                  ("--url", "https://argus.chris:8443", "--replace")):
         r = run(*args)
         assert r.returncode == 7 and "curl ran" in r.stderr, r.stderr
+
+
+def test_an_update_that_fixes_hundreds_of_cves_does_not_silence_its_host():
+    # A kernel update can name hundreds. The report is taken, the list cut at the limit.
+    from argus.app import Package
+    many = [f"CVE-2026-{n:05d}" for n in range(700)]
+    p = Package.model_validate({"name": "linux-image", "to": "6.8", "security": True,
+                                "cves": many, "advisories": [f"USN-{n}-1" for n in range(300)]})
+    assert len(p.cves) == 500 and p.cves[0] == many[0] and len(p.advisories) == 100
+
