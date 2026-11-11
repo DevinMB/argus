@@ -216,50 +216,32 @@ function WhatPages({ view, act, say }) {
           {REPEATS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
       </label>
+      <FixAlerts view={view} act={act} />
       <LinkField view={view} act={act} />
       {say("rules")}
     </div>
   );
 }
 
-// When a security fix cannot wait for the weekly window, and when one that
-// waits is worth a message (design decision 22). Scores are CVSS, out of 10.
-const INSTALL_AT = [[9, "9.0 or more (critical)"], [8, "8.0 or more"], [7, "7.0 or more (high)"], [null, "Never, by score"]];
+// Security fixes (design decision 22). Scores are CVSS, out of 10. The alert
+// line lives here with the other alerts; the install rule lives with patching.
 const ALERT_AT = [[9, "9.0 or more (critical)"], [7, "7.0 or more (high)"], [4, "4.0 or more (medium)"], [null, "Never"]];
+const pick = (v) => (v === "" ? null : Number(v));
 
-export function SecurityFixes({ view, act, say }) {
+function FixAlerts({ view, act }) {
   const sec = view.security;
-  const save = (change) => act("security", "PUT", "/api/alerts", { security: { ...sec, ...change } }, "Saved.");
-  const pick = (v) => (v === "" ? null : Number(v));
+  if (!sec) return null;
   return (
-    <div className="panel" id="security-fixes">
-      <h2 className="eyebrow">Security fixes</h2>
-      <p className="muted">Argus looks up each pending fix's CVEs: their CVSS score (out of 10) from the public CVE records,
-        and whether CISA lists them as being exploited in real attacks.</p>
-      <h3 className="small">Install the same night, outside the weekly window</h3>
-      <label className="toggle">
-        <input type="checkbox" checked={sec.install_exploited} onChange={(e) => save({ install_exploited: e.target.checked })} />
-        <span>A fix for a flaw being exploited in real attacks</span>
-      </label>
-      <label className="field">
-        <span>A fix whose CVE scores</span>
-        <select value={sec.install_min ?? ""} onChange={(e) => save({ install_min: pick(e.target.value) })}>
-          {INSTALL_AT.map(([v, l]) => <option key={l} value={v ?? ""}>{l}</option>)}
-        </select>
-        <small>Only on hosts Argus patches, with <strong>Install urgent security fixes the same night</strong> on (each host's Patching tab),
-          at the host's usual hour, under the same safety net. Lower lines mean more nights with a run: a kernel collects 7s most weeks.</small>
-      </label>
-      <h3 className="small">Alert me</h3>
-      <label className="field">
-        <span>When a fix is waiting whose CVE scores</span>
-        <select value={sec.alert_min ?? ""} onChange={(e) => save({ alert_min: pick(e.target.value) })}>
-          {ALERT_AT.map(([v, l]) => <option key={l} value={v ?? ""}>{l}</option>)}
-        </select>
-        <small>On any host, and always for a flaw being exploited, unless this is Never. Only for fixes that will not go in that night:
-          a host Argus does not patch, or one that waits for its weekly run. The message says when it goes in.</small>
-      </label>
-      {say("security")}
-    </div>
+    <label className="field">
+      <span>A security fix is waiting whose CVE scores</span>
+      <select value={sec.alert_min ?? ""}
+              onChange={(e) => act("rules", "PUT", "/api/alerts", { security: { ...sec, alert_min: pick(e.target.value) } }, "Saved.")}>
+        {ALERT_AT.map(([v, l]) => <option key={l} value={v ?? ""}>{l}</option>)}
+      </select>
+      <small>CVSS score, out of 10. On any host, and always for a flaw being exploited, unless this is Never. Only for fixes that will not go in that night:
+        a host Argus does not patch, or one that waits for its weekly run. The message says when it goes in.
+        What installs the same night is set on <a href="#/hosts?view=patching">Hosts, Patching</a>.</small>
+    </label>
   );
 }
 
@@ -392,6 +374,20 @@ function Watcher({ view, act, busy, say, hosts, argusHost }) {
   );
 }
 
+// What the chosen sender's card says: "Sending now" only once a message can arrive.
+function sendingState(view) {
+  if (view.sender !== "argus") return "Sending now";
+  if (!view.telegram.token_set || !view.telegram.chat_id) return "Not set up yet: add your bot below";
+  if (!view.test_ok_at) return "Set up, not tested yet: send a test below";
+  return "Sending now";
+}
+
+const TABS = [["send", "Who sends them"], ["what", "What alerts you"], ["watch", "Who watches Argus"]];
+const tabOf = () => {
+  const t = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("tab");
+  return TABS.some(([k]) => k === t) ? t : "send";
+};
+
 export default function AlertsPage({ session, hosts = [], argusHost = null }) {
   const [view, setView] = useState(null);
   const [error, setError] = useState(null);
@@ -405,6 +401,13 @@ export default function AlertsPage({ session, hosts = [], argusHost = null }) {
     return () => clearInterval(t);
   }, [reload]);
   useEffect(() => { if (view && want === view.sender) setWant(null); }, [view, want]);
+  // One part at a time (it was one long page); the part lives in the link.
+  const [tab, setTab] = useState(tabOf);
+  useEffect(() => {
+    const on = () => setTab(tabOf());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
 
   if (error) return <p className="banner banner-error">Could not load the alert settings: {error}</p>;
   if (!view) return <p className="muted pad">Loading…</p>;
@@ -414,8 +417,8 @@ export default function AlertsPage({ session, hosts = [], argusHost = null }) {
     <section className="settings">
       <h1>Alerts</h1>
       <p className="lede">
-        Argus tells you when something that matters breaks. Pick who sends the messages; switching
-        never leaves a gap.
+        Argus tells you when something that matters breaks: who sends the messages, what is worth one,
+        and who notices if Argus itself stops.
       </p>
 
       {view.firing.length > 0 && (
@@ -427,7 +430,7 @@ export default function AlertsPage({ session, hosts = [], argusHost = null }) {
                 <span className="dot dot-down" aria-hidden="true" />
                 <strong>{f.title}</strong> <span className="muted">{f.detail}</span>
                 <span className="muted small">
-                  {" "}for {agoText(view.now - f.since)}{f.notified ? "" : sender === "argus" ? ", not sent yet" : ""}
+                  {" "}for {agoText(view.now - f.since).replace(/ ago$/, "")}{f.notified ? "" : sender === "argus" ? ", not sent yet" : ""}
                 </span>
               </li>
             ))}
@@ -435,6 +438,13 @@ export default function AlertsPage({ session, hosts = [], argusHost = null }) {
         </div>
       )}
 
+      <nav className="subtabs" aria-label="Alert settings">
+        {TABS.map(([k, label]) => (
+          <a key={k} href={`#/alerts?tab=${k}`} aria-current={k === tab ? "page" : undefined}>{label}</a>
+        ))}
+      </nav>
+
+      {tab === "send" && <>
       <h2 className="eyebrow">Who sends your alerts?</h2>
       <div className="choice" role="radiogroup" aria-label="Who sends your alerts">
         {Object.entries(SENDERS).map(([k, [name, what]]) => (
@@ -444,7 +454,7 @@ export default function AlertsPage({ session, hosts = [], argusHost = null }) {
             <strong>{name}</strong>
             <span className="muted">{what}</span>
             <span className="choice-state">
-              {sender === k ? "Sending now" : want === k ? "Switching: finish the steps below" : "Switch to this"}
+              {sender === k ? sendingState(view) : want === k ? "Switching: finish the steps below" : "Switch to this"}
             </span>
           </button>
         ))}
@@ -457,9 +467,10 @@ export default function AlertsPage({ session, hosts = [], argusHost = null }) {
         <Prometheus view={view} act={act} busy={busy} say={say} handing={want === "prometheus"} />
       )}
 
-      <WhatPages view={view} act={act} say={say} />
-      {view.security && <SecurityFixes view={view} act={act} say={say} />}
-      <Watcher view={view} act={act} busy={busy} say={say} hosts={hosts} argusHost={argusHost} />
+      </>}
+
+      {tab === "what" && <WhatPages view={view} act={act} say={say} />}
+      {tab === "watch" && <Watcher view={view} act={act} busy={busy} say={say} hosts={hosts} argusHost={argusHost} />}
     </section>
   );
 }

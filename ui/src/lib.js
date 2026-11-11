@@ -120,8 +120,11 @@ export function stamp(ts) {
 }
 
 // Never claim "all up" while checks are still waiting for a first result.
-export function headline(s) {
+// alerting: the same summary for only the checks that alert you. A down check
+// you chose to keep on the dashboard is worth a look, not an alarm.
+export function headline(s, alerting) {
   if (!s.total) return "Nothing watched yet.";
+  if (s.down && alerting && !alerting.down) return s.down === 1 ? "One check is down." : `${s.down} checks are down.`;
   if (s.down) return "Something is down.";
   if (s.failing) return "Something is wobbling.";
   if (s.unknown) return "Starting up.";
@@ -504,6 +507,21 @@ export function attention(host) {
   else if (u?.pending) out.push([u.security ? "failing" : "unknown", `${u.pending} update${u.pending === 1 ? "" : "s"}${u.security ? `, ${u.security} security` : ""}`]);
   if (r.reboot_required) out.push(["failing", "needs a reboot"]);
   return out;
+}
+
+// The colour of a host's dot: the worst thing on it, so a host with a red tag
+// never shows a green dot. Plain pending updates do not colour it.
+export function hostTone(host) {
+  if (host.status === "waiting") return "unknown";
+  const tones = attention(host).map(([t]) => t);
+  return tones.includes("down") ? "down" : tones.includes("failing") ? "failing" : "up";
+}
+
+// Which of the host's tabs shows what a "needs a look" tag is about.
+export function attentionTab(text) {
+  if (/container/.test(text)) return "containers";
+  if (/patch run|urgent security|reboot/.test(text)) return "patching";
+  return "overview";
 }
 
 const SHORT_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];

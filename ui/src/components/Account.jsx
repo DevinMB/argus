@@ -189,8 +189,9 @@ export default function Account({ session, onSession }) {
           <span>
             <strong>Require sign-in to view</strong>
             <small>
-              Off: anyone who can reach Argus sees the checks; only settings need the password.
-              On: everything does, apart from /metrics for Prometheus and the timers' reports.
+              On (the default): everything needs the password, apart from /metrics for Prometheus and the timers' reports.
+              Off: anyone who can reach Argus sees the checks and each host's containers, address and pending security updates;
+              only changes need the password. Good for a wall display on a network you trust.
             </small>
           </span>
         </label>
