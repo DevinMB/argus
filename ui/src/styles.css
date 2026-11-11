@@ -1034,3 +1034,19 @@ a.tag-link:hover { filter: brightness(1.25); text-decoration: underline; }
 .start-head .link-button ~ .link-button { margin-left: 0; }
 .urgent-rule { display: grid; gap: 12px; max-width: 760px; }
 .image-behind { margin-left: 8px; font-family: var(--sans); }
+
+/* Motion (1.3.1). Little, quick, and only where a change would otherwise jump:
+   a press answers, a menu comes from its button, a result fades in, a status
+   changes colour instead of snapping. Nothing that refreshes every 15 seconds
+   moves, and nothing moves for people who ask for less motion (the rule above). */
+:root { --ease-out: cubic-bezier(0.23, 1, 0.32, 1); }
+.btn { transition: transform 0.1s var(--ease-out), border-color 0.15s; }
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.manage-menu { transform-origin: top right; animation: menu-in 0.14s var(--ease-out); }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
+.scrim { animation: fade-in 0.18s ease-out; }
+@keyframes fade-in { from { opacity: 0; } }
+.form-ok, .form-error, .setup-bar-done { animation: settle-in 0.18s var(--ease-out); }
+@keyframes settle-in { from { opacity: 0; transform: translateY(2px); } }
+.dot { transition: background-color 0.3s; }
+.bar > span { transition: width 0.4s var(--ease-out); }
