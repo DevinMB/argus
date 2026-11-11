@@ -279,7 +279,11 @@ function urgentWhy(u) {
   const exploited = ids("exploited");
   const critical = ids("critical");
   if (exploited.length) return `${exploited.slice(0, 2).join(", ")} is being exploited`;
-  if (critical.length) return `${critical.slice(0, 2).join(", ")} is rated critical`;
+  if (critical.length) {
+    const top = Math.max(...u.cves.filter((c) => c.why === "critical").map((c) => c.score ?? 10));
+    return top >= 9 ? `${critical.slice(0, 2).join(", ")} is rated critical`
+      : `${critical.slice(0, 2).join(", ")} scores ${top.toFixed(1)}`;
+  }
   return "its distro rates the fix critical";
 }
 
@@ -486,7 +490,8 @@ function PatchForm({ host, session, refs, backups, onSaved, onCancel, reload }) 
             <label className="pf-check"><input type="checkbox" checked={p.urgent ?? true} onChange={(e) => set("urgent", e.target.checked)} />
               Install urgent security fixes the same night</label>
           </div>
-          <p className="pf-note">Urgent means the flaw is being used in real attacks (CISA's list) or is rated critical (CVSS 9.0 or more).
+          <p className="pf-note">Urgent means the flaw is being used in real attacks (CISA's list) or its CVE scores 9.0 or more,
+            unless you changed that in <a href="#/alerts">Settings, Alerts, Security fixes</a>.
             Only those packages are installed, at this host's usual hour on any day, under the same safety net.</p>
         </div>
 

@@ -7,8 +7,13 @@ A fix is urgent when a CVE it closes is
 - critical: a CVSS base score of 9.0 or more in its public CVE record, or the
   distro's own advisory calls it critical (dnf reports that with the update).
 
-High (7.0 to 8.9) is not urgent by design: a kernel collects those most weeks,
+Those are the defaults; the owner can change both (Settings, Alerts, Security
+fixes): turn off the exploited rule, or set the score from 7.0 up, or never.
+High (7.0 to 8.9) is not urgent by default: a kernel collects those most weeks,
 and a rule that fires every week is the weekly window again.
+
+The same setting says from what score a fix that is waiting, and will not go in
+that night, is worth an alert (argus.patching problems).
 
 Argus looks both up itself, from public sources that need no account, so a
 companion needs no internet for this. Hosts already report the CVE ids their
@@ -46,6 +51,17 @@ CREATE TABLE IF NOT EXISTS cve_scores (
 CREATE TABLE IF NOT EXISTS cve_exploited (cve TEXT PRIMARY KEY);
 """
 KEV_AT = "urgent.kev_at"
+SECURITY = "security.thresholds"
+# install_min / alert_min: a CVSS score, or None for never.
+DEFAULT_SECURITY = {"install_exploited": True, "install_min": CRITICAL, "alert_min": CRITICAL}
+
+
+def band(score: float | None) -> str:
+    """The name CVSS gives a score."""
+    if score is None:
+        return ""
+    return ("critical" if score >= 9 else "high" if score >= 7 else
+            "medium" if score >= 4 else "low")
 
 
 def base_score(record: dict) -> float | None:
@@ -78,12 +94,21 @@ class Urgent:
 
     # --- what is urgent ---
 
+    def thresholds(self) -> dict:
+        return {**DEFAULT_SECURITY, **(self.settings.get(SECURITY) or {})}
+
+    def score(self, cve: str) -> float | None:
+        return self.scores.get(cve, (None, 0))[0]
+
     def why(self, cve: str) -> str:
-        """"exploited", "critical" or ""."""
-        if cve in self.exploited:
+        """Why a fix for this CVE cannot wait: "exploited", "critical" (its score
+        reaches the owner's line, 9.0 unless changed) or ""."""
+        t = self.thresholds()
+        if t["install_exploited"] and cve in self.exploited:
             return "exploited"
-        score = self.scores.get(cve, (None, 0))[0]
-        return "critical" if score is not None and score >= CRITICAL else ""
+        score = self.score(cve)
+        line = t["install_min"]
+        return "critical" if line is not None and score is not None and score >= line else ""
 
     def of(self, packages: list[dict]) -> list[dict]:
         """The pending security updates that are urgent, each with the CVEs that
@@ -92,9 +117,10 @@ class Urgent:
         for p in packages or []:
             if not p.get("security"):
                 continue
-            cves = [{"id": c, "why": w, "score": self.scores.get(c, (None, 0))[0]}
+            cves = [{"id": c, "why": w, "score": self.score(c)}
                     for c in p.get("cves") or [] if (w := self.why(c))]
-            vendor = str(p.get("severity", "")).lower() == "critical"
+            vendor = (str(p.get("severity", "")).lower() == "critical"
+                      and self.thresholds()["install_min"] is not None)
             if cves or vendor:
                 out.append({"name": p["name"], "cves": cves, "vendor": vendor})
         return out
@@ -105,21 +131,50 @@ class Urgent:
         return {c: score for p in packages or [] for c in p.get("cves") or []
                 if (score := self.scores.get(c, (None, 0))[0]) is not None}
 
+    def worth_alerting(self, packages: list[dict]) -> list[dict]:
+        """The pending security updates worth an alert while they wait: one
+        fixing a CVE being exploited, or scored at or above the owner's alert
+        line. [{name, cves: [{id, why, score}], vendor}], like of()."""
+        line = self.thresholds()["alert_min"]
+        if line is None:
+            return []
+        out = []
+        for p in packages or []:
+            if not p.get("security"):
+                continue
+            cves = []
+            for c in p.get("cves") or []:
+                score = self.score(c)
+                if c in self.exploited:
+                    cves.append({"id": c, "why": "exploited", "score": score})
+                elif score is not None and score >= line:
+                    cves.append({"id": c, "why": "critical", "score": score})
+            if cves:
+                out.append({"name": p["name"], "cves": cves, "vendor": False})
+        return out
+
     @staticmethod
     def reason(urgent: list[dict]) -> str:
         """One line for a message: the packages and why they could not wait."""
         names = ", ".join(u["name"] for u in urgent[:6]) + (
             f" and {len(urgent) - 6} more" if len(urgent) > 6 else "")
-        cves = {c["id"]: c["why"] for u in urgent for c in u["cves"]}
-        exploited = sorted(c for c, w in cves.items() if w == "exploited")
-        critical = sorted(c for c, w in cves.items() if w == "critical")
+        cves = {c["id"]: c for u in urgent for c in u["cves"]}
+        exploited = sorted(c for c, x in cves.items() if x["why"] == "exploited")
+        scored = sorted((c for c, x in cves.items() if x["why"] == "critical"),
+                        key=lambda c: (-(cves[c].get("score") or 0), c))
         parts = []
         if exploited:
             parts.append(f"{', '.join(exploited[:3])} {'is' if len(exploited) == 1 else 'are'}"
                          " being exploited")
-        if critical:
-            parts.append(f"{', '.join(critical[:3])} {'is' if len(critical) == 1 else 'are'}"
-                         " rated critical")
+        if scored:
+            top = cves[scored[0]].get("score")
+            if top is None or top >= CRITICAL:
+                parts.append(f"{', '.join(scored[:3])} {'is' if len(scored) == 1 else 'are'}"
+                             " rated critical")
+            else:
+                parts.append(", ".join(
+                    f"{c} scores {cves[c]['score']:.1f} ({band(cves[c]['score'])})"
+                    for c in scored[:3]))
         if not parts:
             parts.append("its distro rates the fix critical")
         return f"{names} ({'; '.join(parts)})"

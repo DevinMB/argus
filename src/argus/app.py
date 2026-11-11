@@ -60,7 +60,7 @@ from argus.settings import Settings, load_key
 from argus.sniff import Sniffer
 from argus.uninstalls import COMMAND as UNINSTALL_COMMAND
 from argus.uninstalls import Uninstalls
-from argus.urgent import Urgent
+from argus.urgent import SECURITY, Urgent
 
 # While Argus updates itself, watchers expect silence this long from the request.
 WATCH_QUIET = 15 * 60
@@ -165,6 +165,16 @@ def _http_url(v: str | None) -> str | None:
     return v
 
 
+class SecurityThresholds(BaseModel):
+    """When a security fix goes in outside the weekly window, and when one that
+    waits is worth an alert (decision 22). A score of None means never."""
+
+    model_config = ConfigDict(extra="forbid")
+    install_exploited: bool = True
+    install_min: float | None = Field(9.0, ge=4.0, le=10.0)
+    alert_min: float | None = Field(9.0, ge=0.1, le=10.0)
+
+
 class AlertSettings(BaseModel):
     """A change on the Alerts page. Absent fields stay as they are; an empty secret
     clears it. Secrets are write-only."""
@@ -176,6 +186,7 @@ class AlertSettings(BaseModel):
                 bool] | None = None
     repeat_minutes: int | None = Field(None, ge=0, le=7 * 24 * 60)
     link: str | None = Field(None, max_length=300)
+    security: SecurityThresholds | None = None
     watch_url: str | None = Field(None, max_length=500)
     # What else watches Argus, in the owner's words ("Prometheus at site A"); "" clears it.
     watch_elsewhere: str | None = Field(None, max_length=120)
@@ -745,6 +756,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         if body.telegram_token is not None or body.chat_id is not None:
             s.set("alerts.test_ok_at", None)  # a new destination needs a new test
             s.set("alerts.delivery", None)
+        if body.security is not None:
+            s.set(SECURITY, body.security.model_dump())
         for field, key in (("chat_id", "alerts.telegram.chat_id"), ("rules", "alerts.rules"),
                            ("repeat_minutes", "alerts.repeat_minutes"), ("link", "alerts.link")):
             value = getattr(body, field)

@@ -372,6 +372,39 @@ class Patching:
                 else f"its backup ({p['backup']}) has never reported" if p["backup"]
                 else "it has no backup linked")
 
+    def _fix_waiting(self, host: str) -> str:
+        """Why a pending fix at or above the owner's alert line (or for a flaw
+        being exploited) will not go in tonight, or "" when there is none or it
+        will: an urgent run takes it at the host's usual hour."""
+        if self.urgent is None:
+            return ""
+        report = self.rt.companions.report_of(host) or {}
+        hot = self.urgent.worth_alerting(
+            ((report.get("updates") or {}).get("packages")) or [])
+        if not hot:
+            return ""
+        p = self.plan(host)
+        # Fixes an urgent run installs tonight need nobody; ones it could not
+        # install already have their own alert (patch-urgent).
+        tonight = {u["name"] for u in self.urgent_pending(host, report)} \
+            if p["enabled"] and p["urgent"] and not report.get("proxmox") else set()
+        if host in self.urgent_skipped:
+            tonight |= {u["name"] for u in self.urgent_pending(host, report)}
+        rest = [x for x in hot if x["name"] not in tonight]
+        if not rest:
+            return ""
+        if p["elsewhere"]:
+            when = "Something else patches this host; make sure it takes this fix."
+        elif not p["enabled"]:
+            when = "Argus does not patch this host, so install it there, or turn patching on."
+        elif report.get("proxmox"):
+            when = (f"A Proxmox server is updated as a whole: it goes in with the run on "
+                    f"{DAYS[p['day']]} at {p['time']}, or press Patch now.")
+        else:
+            when = (f"It goes in with the weekly run on {DAYS[p['day']]} at {p['time']}, "
+                    "or press Patch now.")
+        return f"{self.urgent.reason(rest)}. {when}"
+
     def urgent_pending(self, host: str, report: dict | None) -> list[dict]:
         """This host's pending updates that cannot wait (argus.urgent.Urgent.of)."""
         if self.urgent is None:
@@ -478,6 +511,9 @@ class Patching:
             if h in self.urgent_skipped:
                 out.append((f"patch-urgent:{h}", f"{h} has an urgent security fix waiting",
                             f"{self.urgent_skipped[h]}."))
+            waiting = self._fix_waiting(h)
+            if waiting:
+                out.append((f"patch-cve:{h}", f"{h} has a security fix waiting", waiting))
             # An urgent fix went in but only takes effect after a reboot the plan
             # does not allow: the owner's move.
             if last and last[0]["trigger"] == "urgent" and last[0]["result"] == "ok" \

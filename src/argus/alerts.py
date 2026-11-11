@@ -35,6 +35,7 @@ from argus.companions import DISK_FULL, QUIET_AFTER
 from argus.github import stuck_fixes
 from argus.runtime import Runtime
 from argus.settings import Settings
+from argus.urgent import DEFAULT_SECURITY, SECURITY
 
 log = logging.getLogger("argus")
 # httpx logs each request's URL at INFO, and Telegram's URL holds the bot token.
@@ -184,6 +185,7 @@ class Alerter:
             "rules": {**DEFAULT_RULES, **self.settings.get("alerts.rules", {})},
             "repeat_minutes": self.settings.get("alerts.repeat_minutes", DEFAULT_REPEAT),
             "link": self.settings.get("alerts.link", ""),
+            "security": {**DEFAULT_SECURITY, **(self.settings.get(SECURITY) or {})},
             "delivery": self.settings.get("alerts.delivery", {}),
             "test_ok_at": self.settings.get("alerts.test_ok_at"),
             "prom_test_at": self.settings.get("alerts.prom_test_at"),
