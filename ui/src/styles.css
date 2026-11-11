@@ -764,6 +764,9 @@ a.fleet-title:hover strong { text-decoration: underline; text-decoration-color: 
 .hd-seen { margin-left: auto; }
 .hd-sub { margin: -6px 0 0; }
 .host-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.host-leave { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--line); }
+.host-leave .link-button { color: var(--text); }
+.host-leave .link-button:hover { color: var(--down); }
 .inline-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .inline-form input { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 6px;
   padding: 5px 9px; color: var(--text); font: 13px var(--mono); }

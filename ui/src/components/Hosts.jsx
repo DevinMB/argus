@@ -1056,7 +1056,9 @@ function UninstallState({ host, session, reload, onRetry }) {
   );
 }
 
-function HostActions({ host, session, reload, hosts, updateCommand }) {
+// The everyday actions sit under the host's name; Uninstall and Remove, which
+// end Argus's care of it, wait at the foot of its Overview (part "leave").
+function HostActions({ host, session, reload, hosts, updateCommand, part = "top" }) {
   const [mode, setMode] = useState(null);
   const [name, setName] = useState(host.name);
   const [error, setError] = useState(null);
@@ -1081,14 +1083,34 @@ function HostActions({ host, session, reload, hosts, updateCommand }) {
       setError(e.message);
     }
   };
+  if (part === "leave") {
+    if (host.uninstall) return null;
+    return (
+      <section className="host-leave">
+        {!mode && <p className="small muted">
+          Done with {host.name}?{" "}
+          {!host.read_only && <><button className="link-button" onClick={() => setMode("uninstall")}>Uninstall</button> takes the companion off it and hands its stacks back. </>}
+          <button className="link-button" onClick={() => setMode("remove")}>Remove</button> forgets a host that is gone.
+        </p>}
+        {mode === "uninstall" && <Uninstall host={host} session={session} reload={reload} onClose={() => setMode(null)} />}
+        {mode === "remove" && (
+          <span className="inline-form small">
+            Forget {host.name} without uninstalling, for a host that is gone? Its token stops working at once. If the
+            program is still on it, run <code>sudo /usr/local/bin/argus-companion uninstall</code> there{host.read_only ? "" : ", or use Uninstall instead"}.
+            <button className="btn btn-small" onClick={remove}>Remove</button>
+            <button className="btn btn-small" onClick={() => setMode(null)}>Keep</button>
+          </span>
+        )}
+        {error && <p className="form-error" role="alert">{error}</p>}
+      </section>
+    );
+  }
   return (
     <div className="host-actions">
       <UninstallState host={host} session={session} reload={reload} onRetry={() => setMode("uninstall")} />
       {!mode && !host.uninstall && <>
         <button className="btn btn-small" onClick={() => { setName(host.name); setMode("rename"); }}>Rename</button>
         {!host.read_only && <button className="btn btn-small" onClick={() => setMode("reinstall")}>Reinstall companion</button>}
-        {!host.read_only && <button className="btn btn-small btn-quiet-danger" onClick={() => setMode("uninstall")}>Uninstall</button>}
-        <button className="btn btn-small btn-quiet-danger" onClick={() => setMode("remove")}>Remove</button>
       </>}
       {mode === "uninstall" && <Uninstall host={host} session={session} reload={reload} onClose={() => setMode(null)} />}
       {mode === "reinstall" && <Reinstall host={host} hosts={hosts} session={session} updateCommand={updateCommand} onClose={() => setMode(null)} />}
@@ -1100,14 +1122,6 @@ function HostActions({ host, session, reload, hosts, updateCommand }) {
           <button type="button" className="btn btn-small" onClick={() => setMode(null)}>Cancel</button>
           <small className="muted">Its patch schedule and history come along. Deploys follow the new name (hosts/&lt;name&gt; in your deploy repo).</small>
         </form>
-      )}
-      {mode === "remove" && (
-        <span className="inline-form small">
-          Forget {host.name} without uninstalling, for a host that is gone? Its token stops working at once. If the
-          program is still on it, run <code>sudo /usr/local/bin/argus-companion uninstall</code> there{host.read_only ? "" : ", or use Uninstall instead"}.
-          <button className="btn btn-small" onClick={remove}>Remove</button>
-          <button className="btn btn-small" onClick={() => setMode(null)}>Keep</button>
-        </span>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
     </div>
@@ -1351,7 +1365,10 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
         ))}
       </nav>
       <div className="hd-body">
-        {current === "overview" && <Overview host={host} suggestions={suggestions} session={session} reload={reload} updateCommand={updateCommand} hosts={hosts} />}
+        {current === "overview" && <>
+          <Overview host={host} suggestions={suggestions} session={session} reload={reload} updateCommand={updateCommand} hosts={hosts} />
+          <HostActions host={host} session={session} reload={reload} hosts={hosts} updateCommand={updateCommand} part="leave" />
+        </>}
         {current === "containers" && (
           <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never page.">
             {r.containers.length ? <Containers list={r.containers} host={host} session={session} reload={reload} />
