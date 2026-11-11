@@ -185,7 +185,12 @@ jobs:
           done
           jq '.companions[0].patching.runs[0] | {result, level, reboot, summary}' hosts.json
           jq -e '.companions[0].patching.runs[0] | .result == "ok" and .level == "security" and .reboot == 0' hosts.json \
-            || { jq -r '.companions[0].patching.runs[0].log' hosts.json | tail -60; exit 1; }
+            || { jq -r '.companions[0].patching.runs[0].log' hosts.json | tail -60
+                 # Why it never finished: the companion's own account, and Argus's.
+                 sudo journalctl -u argus-companion --no-pager | tail -40
+                 systemctl list-units 'argus*' --all --no-pager || true
+                 sudo cat /var/lib/argus-companion/patch.json || true
+                 docker logs argus 2>&1 | grep -v 'Setup code' | tail -30; exit 1; }
           curl -s localhost:8099/ | grep -q 'hello from argus'  # still serving after patching
           # Self-update: a companion that differs from the build Argus serves replaces
           # itself (outside its sandbox) and restarts, with no install command re-run.
