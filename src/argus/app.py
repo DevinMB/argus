@@ -712,6 +712,12 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
     async def setup(body: Setup, request: Request, response: Response) -> dict:
         token = auth_call(request.app.state.auth.setup, body.code, body.password,
                           address(request))
+        # A new install asks for the password to view anything: the pages list
+        # every host's address and unpatched CVEs. An install whose owner has
+        # already chosen (on or off) keeps that choice.
+        settings = request.app.state.settings
+        if settings.get("access.view_requires_login") is None:
+            settings.set("access.view_requires_login", True)
         return signed_in(request, response, token)
 
     @app.post("/api/login")

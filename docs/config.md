@@ -23,7 +23,7 @@ Names are lowercase letters, digits and dashes, and unique across checks, heartb
 | `name` | | required |
 | `kind` | | `http`, `tcp` or `ping` |
 | `target` | | `http`: an http(s) URL; `tcp`: `host:port`; `ping`: a host |
-| `severity` | `warning` | `critical` pages; `warning` shows on the dashboard |
+| `severity` | `warning` | `critical` alerts you; `warning` shows on the dashboard |
 | `interval` | `60` | seconds between probes (10 to 3600) |
 | `timeout` | `5` | seconds; shorter than the interval |
 | `expect_status` | `[200]` | `http`: the status codes that count as up |

@@ -36,7 +36,7 @@ export default function SignIn({ session, onSession, why }) {
         {setup ? (
           <p className="muted">
             Choose the admin password. To prove this is your Argus, enter the setup code from its
-            log: <code>docker logs argus</code> shows a line with <code>Setup code:</code>.
+            log. Beside Argus's compose.yml, run <code>docker compose logs argus | grep "Setup code"</code>.
           </p>
         ) : (
           <p className="muted">{why ?? "Settings need the admin password."}</p>
@@ -70,7 +70,7 @@ export default function SignIn({ session, onSession, why }) {
         </div>
         {!setup && (
           <p className="muted small">
-            Forgot it? Run <code>docker exec argus python -m argus reset-login</code>, then set a
+            Forgot it? Beside Argus's compose.yml, run <code>docker compose exec argus python -m argus reset-login</code>, then set a
             new one with the code from the log.
           </p>
         )}

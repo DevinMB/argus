@@ -1,0 +1,38 @@
+name: Something does not work
+description: A bug in Argus or its companion
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: A security hole? Do not post it here. See SECURITY.md for how to report it privately.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Argus did instead. Quote any error text exactly.
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: Argus version
+      description: At the foot of every page, and under Settings, Account.
+      placeholder: "1.3.0"
+    validations: { required: true }
+  - type: input
+    id: host
+    attributes:
+      label: The host it concerns, if any
+      description: Its OS and companion version, from the top of the host's page.
+      placeholder: "Debian 13, companion 1.3.0+cc95e2d"
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options: [Checks, Hosts, Patching, Deploys, Updates (GitHub), Alerts, Installing or upgrading, Something else]
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "From Argus: `docker compose logs argus --tail 100`. From a host: `journalctl -u argus-companion -n 100`. Remove anything private."
+      render: text

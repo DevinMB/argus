@@ -113,14 +113,24 @@ def test_password_change_signs_out_other_sessions(rt, client, caplog):
     assert auth.session(client.cookies.get(COOKIE)) is not None
 
 
-def test_view_can_require_login(client, caplog):
-    assert client.get("/api/checks").status_code == 200
+def test_a_new_install_requires_login_to_view_and_the_owner_can_open_it(client, caplog):
+    # The pages list each host's address and unpatched CVEs: not for every
+    # device on the network unless the owner says so.
     csrf = sign_up(client, caplog)["csrf"]
-    client.put("/api/access", json={"view_requires_login": True}, headers={"X-CSRF-Token": csrf})
     assert client.get("/api/checks").status_code == 200
+    jar = dict(client.cookies)
     client.cookies.clear()
     assert client.get("/api/checks").status_code == 401
+    assert client.get("/api/companions").status_code == 401
     assert client.get("/api/session").json()["view_requires_login"] is True
+    client.cookies.update(jar)
+    client.put("/api/access", json={"view_requires_login": False}, headers={"X-CSRF-Token": csrf})
+    client.cookies.clear()
+    assert client.get("/api/checks").status_code == 200
+    client.cookies.update(jar)
+    client.put("/api/access", json={"view_requires_login": True}, headers={"X-CSRF-Token": csrf})
+    client.cookies.clear()
+    assert client.get("/api/checks").status_code == 401
     # Timers, health and metrics stay open.
     assert client.post("/heartbeat/stack-sync").status_code == 204
     assert client.get("/healthz").status_code in (200, 503)

@@ -4,6 +4,7 @@ import { send } from "../api.js";
 // The first-run checklist: one next step at a time, each with why it matters.
 export default function GetStarted({ start, session, onWatch, onAddCheck, reload }) {
   const [picked, setPicked] = useState(null);
+  const [all, setAll] = useState(false);
   if (!start || start.done === start.steps.length) return null;
   const show = (hidden) => send("PUT", "/api/start", { hidden }, session?.csrf).then(reload, () => {});
   // Hidden is never a dead end: one line stays, to bring it back.
@@ -18,11 +19,33 @@ export default function GetStarted({ start, session, onWatch, onAddCheck, reload
   // The next undone step is open; any other opens when its title is pressed.
   const next = start.steps.find((s) => s.key === picked && !s.done) ?? start.steps.find((s) => !s.done);
   const hide = () => show(true);
+  // Once the first step is done the page belongs to the checks: the list
+  // folds to one line with the next step, and opens again when asked.
+  if (start.done > 0 && !all) {
+    return (
+      <section className="start start-compact panel" aria-label="Get started">
+        <strong>Get started</strong>
+        <span className="muted small">{start.done} of {start.steps.length} done</span>
+        <span className="bar" aria-hidden="true">
+          <span className="fill-up" style={{ width: `${(100 * start.done) / start.steps.length}%` }} />
+        </span>
+        <span className="start-next-line">Next: <strong>{next.title}</strong>.{" "}
+          {next.key === "checks"
+            ? <button className="link-button" onClick={onAddCheck}>{next.action}</button>
+            : <a href={next.href}>{next.action}</a>}</span>
+        <span className="start-links small">
+          <button className="link-button" aria-expanded="false" onClick={() => setAll(true)}>Show all steps</button>
+          {session?.signed_in && <button className="link-button" onClick={hide}>Hide for now</button>}
+        </span>
+      </section>
+    );
+  }
   return (
     <section className="start panel" aria-label="Get started">
       <div className="start-head">
         <h2>Get started</h2>
         <span className="muted small">{start.done} of {start.steps.length} done</span>
+        {start.done > 0 && <button className="link-button small" onClick={() => setAll(false)}>Show less</button>}
         {session?.signed_in && <button className="link-button small" onClick={hide}>Hide for now</button>}
       </div>
       <span className="bar" aria-hidden="true">
@@ -83,7 +106,7 @@ export function SetupBar({ start, session, view }) {
   if (!session?.signed_in || !start || start.hidden || view === "checks") return null;
   const next = start.steps.find((s) => !s.done);
   if (!next && !justDone) return null;
-  const here = next && next.href === `#/${view}`;
+  const here = next && (next.href ?? "").split("?")[0] === `#/${view}`;
   return (
     <p className={`banner setup-bar ${justDone ? "setup-bar-done" : ""}`} role="status">
       {justDone && <span><span className="st-up">Done:</span> {justDone}. </span>}

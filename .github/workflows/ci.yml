@@ -274,8 +274,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && exit 0
+          # GitHub lists the merged pull requests; say them plainly: "- Title (#12)",
+          # with dependency updates under their own heading, then how to get it.
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body > raw.md
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "## What changed"
+            grep '^\* ' raw.md | grep -v ' by @dependabot' \
+              | sed -E 's|^\* (.*) by @[^ ]+ in https://[^ ]+/pull/([0-9]+)$|- \1 (#\2)|' || true
+            if grep -q ' by @dependabot' raw.md; then
+              echo; echo "### Dependency updates"
+              grep ' by @dependabot' raw.md \
+                | sed -E 's|^\* (.*) by @[^ ]+ in https://[^ ]+/pull/([0-9]+)$|- \1 (#\2)|'
+            fi
+            echo; echo "## Get it"
+            echo "In Argus: **Settings, Account, Update Argus**. Or beside Argus's compose.yml: \`docker compose pull && docker compose up -d\`."
+            echo "Image: \`ghcr.io/devinmb/argus:$version\` (amd64 and arm64). Companions update themselves."
+            echo; grep '^\*\*Full Changelog' raw.md || true
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --notes-file notes.md
 
   # The Dependabot gate, after everything above passes: patch and minor updates
   # merge, then ci.yml runs on main (a merge made with GITHUB_TOKEN starts no

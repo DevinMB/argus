@@ -2,13 +2,13 @@
 
 **Keep a homelab watched, patched and deployed, from one container.**
 
-Argus checks your services and pages you when one stops answering. A small companion on each host shows its containers, disks and pending updates, patches it in a weekly window once it has a recent backup, and deploys your Compose stacks from git when you merge. No Prometheus, Grafana or Alertmanager needed, and no config files unless you want them.
+Argus checks your services and alerts you when one stops answering. A small companion on each host shows its containers, disks and pending updates, patches it in a weekly window once it has a recent backup, and deploys your Compose stacks from git when you merge. No Prometheus, Grafana or Alertmanager needed, and no config files unless you want them.
 
 ![The Argus home page: checks, a ring of their status, and the getting-started checklist](docs/screenshots/home.png)
 
 ## What it does
 
-- **Watches** anything with a URL, a port or an address, every minute; three failures in a row and it pages you on Telegram (or hands off to your Prometheus). Pause one you already know is down.
+- **Watches** anything with a URL, a port or an address, every minute; three failures in a row and it alerts you on Telegram (or hands off to your Prometheus). Pause one you already know is down.
 - **Knows your hosts.** One command adds a host; Argus then shows its containers, disks, failed services and pending updates, and suggests a check for every port its containers publish.
 - **Patches** each host on the weekly schedule you choose, one host at a time, once it has a backup Argus can see. You decide how recent that backup must be, how far updates go, and whether it may reboot. A fix for a flaw that is being exploited or is rated critical does not wait for the window: it goes in that night. Already patching a host another way? Tell Argus and it leaves that host alone.
 - **Deploys from git.** Keep each host's Compose stacks in a repo; a merge deploys them, a stack that does not come up healthy is rolled back, and stacks already running can be adopted in place with one button.

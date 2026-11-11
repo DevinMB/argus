@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
-import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
+import UrgentRule from "./UrgentRule.jsx";
+import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostTone, attentionTab, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
 
 const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
@@ -71,25 +72,29 @@ function AddHost({ session, hosts, tlsPin, onClose, initialName = "" }) {
               <small>Argus is behind a proxy, so the host checks the proxy's certificate as usual.</small>
             )}
           </label>
-          <label className="field">
-            <span>How many hosts will run it</span>
-            <input type="number" min="1" max="50" value={count}
-                   onChange={(e) => setCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} />
-            <small>Adding several guests? Make one command and run it on each, within an hour; each host takes its own name.</small>
-          </label>
-          {count === 1 && <label className="field">
-            <span>Name (optional)</span>
-            <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="the host's own name"
-                   pattern="[a-z0-9][a-z0-9\-]{0,62}" spellCheck="false" />
-            <small>Lowercase letters, digits and dashes. Checks in argus.yml use it in <code>companion:</code>.</small>
-          </label>}
-          <label className="toggle">
-            <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
-            <span>
-              <strong>Monitoring only</strong>
-              <small>This host reports but will never deploy anything, whatever Argus says later.</small>
-            </span>
-          </label>
+          {/* Most people add one host under its own name: the command comes first, the rest waits here. */}
+          <details className="add-options" open={count > 1 || !!name || readOnly}>
+            <summary className="small">Options: several hosts at once, another name, monitoring only</summary>
+            <label className="field">
+              <span>How many hosts will run it</span>
+              <input type="number" min="1" max="50" value={count}
+                     onChange={(e) => setCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} />
+              <small>Adding several guests? Make one command and run it on each, within an hour; each host takes its own name.</small>
+            </label>
+            {count === 1 && <label className="field">
+              <span>Name (optional)</span>
+              <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="the host's own name"
+                     pattern="[a-z0-9][a-z0-9\-]{0,62}" spellCheck="false" />
+              <small>Lowercase letters, digits and dashes. Checks in argus.yml use it in <code>companion:</code>.</small>
+            </label>}
+            <label className="toggle">
+              <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+              <span>
+                <strong>Monitoring only</strong>
+                <small>This host reports, but Argus will never patch it or deploy to it, whatever Argus says later.</small>
+              </span>
+            </label>
+          </details>
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="actions">
             <button className="btn btn-primary">Make the command</button>
@@ -491,7 +496,7 @@ function PatchForm({ host, session, refs, backups, onSaved, onCancel, reload }) 
               Install urgent security fixes the same night</label>
           </div>
           <p className="pf-note">Urgent means the flaw is being used in real attacks (CISA's list) or its CVE scores 9.0 or more,
-            unless you changed that in <a href="#/alerts">Settings, Alerts, Security fixes</a>.
+            unless you changed that on <a href="#/hosts?view=patching">Hosts, Patching</a>.
             Only those packages are installed, at this host's usual hour on any day, under the same safety net.</p>
         </div>
 
@@ -696,10 +701,13 @@ function backupTag(host, guest) {
   return [[host.patching?.plan?.enabled ? "failing" : "unknown", backupText(guest)]];
 }
 
-function Tags({ items, empty = "all good" }) {
+// With a host, each tag is a link to the tab that shows what it is about.
+function Tags({ items, empty = "all good", host, here }) {
   // Fine is the normal state: say it quietly, so the rows that need a look stand out.
   if (!items.length) return <span className="tag-none">{empty}</span>;
-  return <span className="tags">{items.map(([tone, text]) => <span key={text} className={`tag tag-${tone}`}>{text}</span>)}</span>;
+  return <span className="tags">{items.map(([tone, text]) => (host && attentionTab(text) !== here
+    ? <a key={text} className={`tag tag-${tone} tag-link`} href={`#/hosts?host=${encodeURIComponent(host.name)}&tab=${attentionTab(text)}`}>{text}</a>
+    : <span key={text} className={`tag tag-${tone}`}>{text}</span>))}</span>;
 }
 
 const open = (name, tab) => { window.location.hash = `/hosts?host=${encodeURIComponent(name)}${tab ? `&tab=${tab}` : ""}`; };
@@ -714,12 +722,12 @@ function HostRow({ host, guest, child, toggle }) {
           <button className="fold" aria-expanded={toggle.open} onClick={toggle.flip}
                   title={toggle.open ? "Hide its guests" : "Show its guests"}>{toggle.open ? "▾" : "▸"}</button>
         ) : !child && <span className="fold-space" />}
-        <span className={`dot dot-${tone}`} title={word} />
+        <span className={`dot dot-${host.status === "ok" ? hostTone(host) : tone}`} aria-hidden="true" />
         <a className="fleet-title" href={`#/hosts?host=${encodeURIComponent(host.name)}`}>
           <strong>{host.name}</strong><span className="muted small">{hostSub(host, guest)}</span></a>
       </span>
       <span className="fleet-tags">
-        <Tags items={[...attention(host), ...backupTag(host, guest)]} /></span>
+        <Tags items={[...attention(host), ...backupTag(host, guest)]} host={host} /></span>
       <span className="fleet-patch small">
         <span className={`st-${ptone}`}>{ptext}</span>
         {host.patching?.plan?.outside_backup ? <span className="muted">backed up outside Argus</span>
@@ -763,7 +771,7 @@ function GuestRow({ guest, install, canAdd, onAdd, skipped, onSkip }) {
     <>
     <div className="fleet-row fleet-child fleet-bare">
       <span className="fleet-name">
-        <span className="dot dot-hollow" title="no Argus" />
+        <span className="dot dot-hollow" role="img" aria-label="no Argus" title="no Argus" />
         <span className="fleet-title"><span>{guest.name || "(no name)"}</span>
           <span className="muted small">{guest.type === "lxc" ? "CT" : "VM"} {guest.vmid} · {guest.status}</span></span>
       </span>
@@ -1070,18 +1078,29 @@ function ManageMenu({ host, session, onPick }) {
   useEffect(() => {
     if (!open) return undefined;
     const away = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
-    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") { setOpen(false); ref.current?.querySelector("button")?.focus(); } };
     document.addEventListener("pointerdown", away);
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
   }, [open]);
+  // Opening moves focus into the menu; the arrow keys, Home and End move within it.
+  useEffect(() => { if (open) ref.current?.querySelector('[role="menuitem"]')?.focus(); }, [open]);
   if (!session?.signed_in || host.uninstall) return null;
   const pick = (m) => { setOpen(false); onPick(m); };
+  const keys = (e) => {
+    const items = [...(ref.current?.querySelectorAll('[role="menuitem"]') ?? [])];
+    const at = items.indexOf(document.activeElement);
+    const to = { ArrowDown: (at + 1) % items.length, ArrowUp: (at - 1 + items.length) % items.length,
+                 Home: 0, End: items.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    items[to]?.focus();
+  };
   return (
     <span className="manage" ref={ref}>
       <button className="btn btn-small" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>Manage ▾</button>
       {open && (
-        <span className="manage-menu" role="menu">
+        <span className="manage-menu" role="menu" aria-label={`Manage ${host.name}`} onKeyDown={keys}>
           <button role="menuitem" onClick={() => pick("rename")}>Rename<small>Its plan, history and deploys come along</small></button>
           {!host.read_only && <button role="menuitem" onClick={() => pick("reinstall")}>Reinstall companion<small>The command to run on the host again</small></button>}
           <hr />
@@ -1259,7 +1278,7 @@ function PackageList({ packages, os, pending, urgent = [], scores = {} }) {
                   <span key={id} className="cve">
                     {url ? <a className="mono" href={url} target="_blank" rel="noreferrer">{id}</a>
                       : <span className="mono">{id}</span>}
-                    {sev && <span className={`cvss cvss-${sev.tone}`} title={`CVSS base score ${sev.score} of 10 (${sev.band})`}>{sev.score}</span>}
+                    {sev && <span className={`cvss cvss-${sev.tone}`} title={`CVSS base score ${sev.score} of 10 (${sev.band})`} aria-label={`CVSS ${sev.score}, ${sev.band}`}>{sev.score}</span>}
                   </span>
                 );
               })}</span>
@@ -1305,7 +1324,7 @@ function Overview({ host, suggestions, session, reload, updateCommand, hosts }) 
         </Section>
       )}
       <Section title="needs a look">
-        {look.length ? <Tags items={look} /> : <p className="muted small">Nothing. {hostSentence(host)}</p>}
+        {look.length ? <Tags items={look} host={host} here="overview" /> : <p className="muted small">Nothing. {hostSentence(host)}</p>}
         {r.reboot_required && (
           <p className="muted small">{host.patching?.plan?.enabled
             ? "Its next patch window reboots it. To do it sooner, press Patch now on the Patching tab."
@@ -1316,7 +1335,7 @@ function Overview({ host, suggestions, session, reload, updateCommand, hosts }) 
       </Section>
       {r.disks?.length > 0 && <Section title="disks"><Disks disks={r.disks} /></Section>}
       {(r.updates || r.reboot_required) && (
-        <Section title="updates">
+        <Section title="updates" about="Next to each CVE is its CVSS score, out of 10, from the public CVE record: low under 4, medium to 6.9, high to 8.9, critical from 9. An update's tag shows its worst score. Being exploited means CISA lists the flaw as used in real attacks. A CVE only days old may have no score yet.">
           <p className="small">
             {r.updates?.pending != null && (r.updates.pending
               ? `${r.updates.pending} waiting${r.updates.security != null ? `, ${r.updates.security} of them security` : ""} (${r.updates.manager}).`
@@ -1366,7 +1385,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
     <article className="host-detail">
       <a className="back small muted" href="#/hosts">← Hosts</a>
       <header className="hd-head">
-        <span className={`dot dot-${tone}`} />
+        <span className={`dot dot-${host.status === "ok" ? hostTone(host) : tone}`} aria-hidden="true" />
         <h1>{host.name}</h1>
         <span className={`st-${tone}`}>{word}</span>
         {host.read_only && <span className="chip">monitoring only</span>}
@@ -1388,7 +1407,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
       <div className="hd-body">
         {current === "overview" && <Overview host={host} suggestions={suggestions} session={session} reload={reload} updateCommand={updateCommand} hosts={hosts} />}
         {current === "containers" && (
-          <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never page.">
+          <Section title="containers" about="Ignore sets aside one you do not care about (a one-off that exited): it moves to the bottom and no longer counts as trouble. Stopped containers never alert you.">
             {r.containers.length ? <Containers list={r.containers} host={host} session={session} reload={reload} />
               : <p className="muted small">Docker runs, with no containers.</p>}
             {r.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
@@ -1451,7 +1470,7 @@ function PatchPlan({ hosts, backups, session, reload }) {
   const set = (k) => (e) => setPlan({ ...plan, [k]: k === "day" || k === "backup_days" ? Number(e.target.value) : e.target.value });
   return (
     <div className="patch-plan">
-      <Section title={`guests (${guests.length})`}
+      {(servers.length > 0 || guests.length > 0) && <Section title={`guests (${guests.length})`}
         about="Each guest is patched with all its updates and rebooted when an update needs it, one guest at a time, only when its Proxmox backup is recent. Change any one guest on its own page.">
         {ready.length === 0 ? (
           <p className="small muted">Every guest has a plan. A guest added later shows up here, ready to join it.</p>
@@ -1511,7 +1530,7 @@ function PatchPlan({ hosts, backups, session, reload }) {
               <span className={`row-note ${tone === "up" ? "" : `st-${tone}`}`}>{text}</span><span className="row-act" /></li>
           );
         })}</ul>
-      </Section>
+      </Section>}
 
       {servers.length > 0 && (
         <Section title={`proxmox servers (${servers.length})`}
@@ -1523,7 +1542,7 @@ function PatchPlan({ hosts, backups, session, reload }) {
       )}
 
       {others.length > 0 && (
-        <Section title={`other hosts (${others.length})`}
+        <Section title={`${servers.length > 0 || guests.length > 0 ? "other hosts" : "hosts"} (${others.length})`}
           about="Argus cannot see a backup for these. If a VM snapshot or a backup job covers one, have it report to Argus as a timer or a run. Then link it on the host's Patching tab. Argus snapshots a host with a ZFS root itself before each run.">
           <ul className="rows">{others.map((h) => {
             const [tone, text] = state(h);
@@ -1536,6 +1555,9 @@ function PatchPlan({ hosts, backups, session, reload }) {
             );
           })}</ul>
         </Section>
+      )}
+      {session?.signed_in && (
+        <Section title="urgent security fixes"><UrgentRule session={session} /></Section>
       )}
     </div>
   );

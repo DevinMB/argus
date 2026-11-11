@@ -43,7 +43,7 @@ KINDS = {"checks": cfg.Check, "heartbeats": cfg.Heartbeat, "jobs": cfg.Job}
 
 STARTER = """\
 # Argus's config. Edit it here or on the Checks page; Argus checks it before saving.
-# Docs: the README's "Config" section.
+# Docs: docs/config.md in the Argus repository.
 checks: []
 """
 
