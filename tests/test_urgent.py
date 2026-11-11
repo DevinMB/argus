@@ -278,3 +278,57 @@ def test_an_apps_critical_fix_that_is_a_major_update_reaches_the_owner(env):
     # The owner can turn the rule off.
     assert c.put("/api/alerts", headers=csrf, json={"rules": {"apps": False}}).status_code == 200
     assert not any(k.startswith("app-fix") for k in al.problems())
+
+
+def test_the_owner_sets_what_goes_in_at_once_and_what_alerts(env):
+    c, csrf, rt, clock = env
+    nas = enroll(c, csrf, "nas")
+    c.put("/api/patching/nas", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
+    job_ok(c, rt, clock, "nas-backup")
+    u, al = c.app.state.urgent, c.app.state.alerter
+    u.scores = {"CVE-2027-0002": (7.8, clock.now), "CVE-2027-0003": (5.0, clock.now)}
+    ups = pending(("vim", ["CVE-2027-0002"]), ("tar", ["CVE-2027-0003"]))
+    # The defaults: 7.8 neither goes in at once nor alerts.
+    assert c.get("/api/alerts").json()["security"] == {
+        "install_exploited": True, "install_min": 9.0, "alert_min": 9.0}
+    assert "patch" not in report(c, nas, local=WED_0305, updates=ups)
+    assert "patch-cve:nas" not in al.problems()
+
+    # Alert from 7.0: it waits for Tuesday's window, and says so.
+    r = c.put("/api/alerts", headers=csrf, json={"security": {
+        "install_exploited": True, "install_min": 9.0, "alert_min": 7.0}})
+    assert r.status_code == 200 and r.json()["security"]["alert_min"] == 7.0
+    p = al.problems()["patch-cve:nas"]
+    assert p.title == "nas has a security fix waiting"
+    assert p.detail == ("vim (CVE-2027-0002 scores 7.8 (high)). It goes in with the weekly "
+                        "run on Tuesday at 03:00, or press Patch now.")
+
+    # Install from 7.0 too: it goes in tonight, so nothing to alert about.
+    c.put("/api/alerts", headers=csrf, json={"security": {
+        "install_exploited": True, "install_min": 7.0, "alert_min": 7.0}})
+    assert "patch-cve:nas" not in al.problems()
+    run = report(c, nas, local={**WED_0305, "date": "2027-01-20"}, updates=ups)["patch"]
+    assert run["level"] == "urgent" and run["packages"] == ["vim"]
+
+
+def test_exploited_can_wait_for_the_window_but_still_alerts(env):
+    c, csrf, rt, clock = env
+    nas = enroll(c, csrf, "nas")
+    u, al = c.app.state.urgent, c.app.state.alerter
+    u.exploited = {"CVE-2027-0001"}
+    ups = pending(("openssl", ["CVE-2027-0001"]))
+    report(c, nas, local=WED_0305, updates=ups)
+    # Argus does not patch nas: the owner hears about it.
+    p = al.problems()["patch-cve:nas"]
+    assert p.detail.startswith("openssl (CVE-2027-0001 is being exploited). Argus does not "
+                               "patch this host")
+    c.put("/api/patching/nas", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
+    job_ok(c, rt, clock, "nas-backup")
+    assert "patch-cve:nas" not in al.problems()  # it goes in tonight
+    c.put("/api/alerts", headers=csrf, json={"security": {
+        "install_exploited": False, "install_min": None, "alert_min": 9.0}})
+    assert "patch" not in report(c, nas, local=WED_0305, updates=ups)
+    assert "weekly run on Tuesday" in al.problems()["patch-cve:nas"].detail
+    c.put("/api/alerts", headers=csrf, json={"security": {
+        "install_exploited": False, "install_min": None, "alert_min": None}})
+    assert "patch-cve:nas" not in al.problems()

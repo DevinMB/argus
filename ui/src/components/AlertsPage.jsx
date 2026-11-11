@@ -222,6 +222,47 @@ function WhatPages({ view, act, say }) {
   );
 }
 
+// When a security fix cannot wait for the weekly window, and when one that
+// waits is worth a message (design decision 22). Scores are CVSS, out of 10.
+const INSTALL_AT = [[9, "9.0 or more (critical)"], [8, "8.0 or more"], [7, "7.0 or more (high)"], [null, "Never, by score"]];
+const ALERT_AT = [[9, "9.0 or more (critical)"], [7, "7.0 or more (high)"], [4, "4.0 or more (medium)"], [null, "Never"]];
+
+export function SecurityFixes({ view, act, say }) {
+  const sec = view.security;
+  const save = (change) => act("security", "PUT", "/api/alerts", { security: { ...sec, ...change } }, "Saved.");
+  const pick = (v) => (v === "" ? null : Number(v));
+  return (
+    <div className="panel" id="security-fixes">
+      <h2 className="eyebrow">Security fixes</h2>
+      <p className="muted">Argus looks up each pending fix's CVEs: their CVSS score (out of 10) from the public CVE records,
+        and whether CISA lists them as being exploited in real attacks.</p>
+      <h3 className="small">Install the same night, outside the weekly window</h3>
+      <label className="toggle">
+        <input type="checkbox" checked={sec.install_exploited} onChange={(e) => save({ install_exploited: e.target.checked })} />
+        <span>A fix for a flaw being exploited in real attacks</span>
+      </label>
+      <label className="field">
+        <span>A fix whose CVE scores</span>
+        <select value={sec.install_min ?? ""} onChange={(e) => save({ install_min: pick(e.target.value) })}>
+          {INSTALL_AT.map(([v, l]) => <option key={l} value={v ?? ""}>{l}</option>)}
+        </select>
+        <small>Only on hosts Argus patches, with <strong>Install urgent security fixes the same night</strong> on (each host's Patching tab),
+          at the host's usual hour, under the same safety net. Lower lines mean more nights with a run: a kernel collects 7s most weeks.</small>
+      </label>
+      <h3 className="small">Alert me</h3>
+      <label className="field">
+        <span>When a fix is waiting whose CVE scores</span>
+        <select value={sec.alert_min ?? ""} onChange={(e) => save({ alert_min: pick(e.target.value) })}>
+          {ALERT_AT.map(([v, l]) => <option key={l} value={v ?? ""}>{l}</option>)}
+        </select>
+        <small>On any host, and always for a flaw being exploited, unless this is Never. Only for fixes that will not go in that night:
+          a host Argus does not patch, or one that waits for its weekly run. The message says when it goes in.</small>
+      </label>
+      {say("security")}
+    </div>
+  );
+}
+
 function LinkField({ view, act }) {
   const [link, setLink] = useState(view.link || window.location.origin);
   return (
@@ -417,6 +458,7 @@ export default function AlertsPage({ session, hosts = [], argusHost = null }) {
       )}
 
       <WhatPages view={view} act={act} say={say} />
+      {view.security && <SecurityFixes view={view} act={act} say={say} />}
       <Watcher view={view} act={act} busy={busy} say={say} hosts={hosts} argusHost={argusHost} />
     </section>
   );
