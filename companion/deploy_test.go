@@ -152,7 +152,7 @@ func TestPolicyRefusesBeforeWriting(t *testing.T) {
 		t.Fatal("retried a refused stack with the same policy")
 	}
 	// ...and a changed policy on the host is worth another try at once.
-	_ = os.WriteFile(d.PolicyPath, []byte(`{"bind_roots": ["/srv", "/home/devin"]}`), 0o644)
+	_ = os.WriteFile(d.PolicyPath, []byte(`{"bind_roots": ["/srv", "/home/sam"]}`), 0o644)
 	if !d.Apply(&DeployPlan{Stacks: []StackSpec{stack("d1", "v1")}}) {
 		t.Fatal("did not retry after the host's policy changed")
 	}

@@ -1,5 +1,5 @@
-"""Pausing a check: "I know it is down" (Devin, 2026-11-02, about an Ollama server
-switched off until another project is done)."""
+"""Pausing a check whose owner knows it is down (2026-11-02: a server switched off
+until another project is done)."""
 
 import asyncio
 import logging

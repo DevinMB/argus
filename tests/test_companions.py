@@ -437,15 +437,15 @@ def test_leave_argus_lists_the_hosts_and_asks_each_with_the_password_twice(clien
 
 def test_leave_argus_names_what_lives_outside_argus(rt, client, csrf):
     s = client.app.state.settings
-    s.set("github.app", {"id": 1, "slug": "argus-devin", "name": "Argus (devin)",
-                         "html_url": "https://github.com/apps/argus-devin", "owner": "devin",
+    s.set("github.app", {"id": 1, "slug": "argus-sam", "name": "Argus (sam)",
+                         "html_url": "https://github.com/apps/argus-sam", "owner": "sam",
                          "owner_type": "User"})
-    s.set("deploy.repo", "devin/stacks")
+    s.set("deploy.repo", "sam/stacks")
     s.set_secret("deploy.write_token", "github_pat_x")
     s.set_secret("alerts.telegram.token", "123:abc")
     keys = {o["key"]: o for o in client.get("/api/leave").json()["outside"]}
     assert set(keys) == {"github_app", "deploy_repo", "write_token", "telegram"}
-    assert keys["github_app"]["url"] == "https://github.com/settings/apps/argus-devin/advanced"
+    assert keys["github_app"]["url"] == "https://github.com/settings/apps/argus-sam/advanced"
     assert "dependabot.yml" in keys["deploy_repo"]["how"]
 
 
@@ -510,8 +510,8 @@ def test_something_else_can_watch_argus(client, csrf):
 
 
 def test_the_install_script_never_moves_a_host_from_another_argus(tmp_path):
-    # Chris may run his own Argus on the Proxmox server one of Devin's VMs lives
-    # on; "Add Argus to all" there must not take that VM over (2026-11-10).
+    # Someone else may run their own Argus on a Proxmox server where one of the
+    # owner's VMs lives; "Add Argus to all" there must not take that VM over (2026-11-10).
     import json as _json
     import subprocess
 

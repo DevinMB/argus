@@ -307,8 +307,8 @@ def test_a_guest_that_never_got_its_turn_says_so(env):
 
 
 def test_a_plan_saved_after_the_days_window_missed_nothing(env):
-    # Devin, 2026-11-10: plans saved on a Tuesday afternoon for Tuesday 03:00 said
-    # "other hosts took it" (nothing else ran) and reminded him every 4 hours.
+    # 2026-11-10: plans saved on a Tuesday afternoon for Tuesday 03:00 said
+    # "other hosts took it" (nothing else ran) and sent a reminder every 4 hours.
     c, csrf, rt, clock = env
     tok = enroll(c, csrf, "lab")
     c.put("/api/patching/lab", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
@@ -327,8 +327,8 @@ def test_guests_backups_do_not_cover_a_host_that_is_not_a_proxmox_server(env):
 
 
 def test_a_host_the_owner_can_rebuild_is_patched_without_a_backup(env):
-    # Decision 12, amended by Devin (2026-11-07): "for things like this where I
-    # don't care if there's a backup... I'd still like to avoid any vulns".
+    # Decision 12, amended (2026-11-07): a host that can be rebuilt may be patched
+    # without a backup, because an unpatched host is the larger risk.
     c, csrf, rt, clock = env
     tok = enroll(c, csrf, "herdr-lab")
     assert c.post("/api/patching/herdr-lab/now", headers=csrf).status_code == 409

@@ -47,12 +47,12 @@ def test_a_check_github_did_not_answer_does_not_say_up_to_date(monkeypatch, tmp_
 
 
 RELEASES = [
-    {"tag_name": "v2.0.0", "name": "v2.0.0", "body": "* Big change by @devinmb in https://github.com/x/y/pull/9"},
+    {"tag_name": "v2.0.0", "name": "v2.0.0", "body": "* Big change by @someone in https://github.com/x/y/pull/9"},
     {"tag_name": "v1.1.0", "name": "v1.1.0",
-     "body": "## What's Changed\n* Watchers by @devinmb in https://github.com/x/y/pull/8\n"
-             "* Fix a typo by @devinmb in https://github.com/x/y/pull/7"},
+     "body": "## What's Changed\n* Watchers by @someone in https://github.com/x/y/pull/8\n"
+             "* Fix a typo by @someone in https://github.com/x/y/pull/7"},
     {"tag_name": "v1.0.2-rc1", "prerelease": True, "body": ""},
-    {"tag_name": "v1.0.1", "name": "v1.0.1", "body": "* Older fix by @devinmb in https://github.com/x/y/pull/6"},
+    {"tag_name": "v1.0.1", "name": "v1.0.1", "body": "* Older fix by @someone in https://github.com/x/y/pull/6"},
     {"tag_name": "v1.0.0", "name": "v1.0.0", "body": ""},
 ]
 
