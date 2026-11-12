@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
 import UrgentRule from "./UrgentRule.jsx";
-import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostStatus, hostTone, attentionTab, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
+import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostStatus, hostTone, updatesWaiting, pickedByDefault, attentionTab, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
 
 const FIRST_CONTAINERS = 8;
 const FIRST_IDS = 6; // advisory and CVE ids shown per update before "and N more"
@@ -1463,6 +1463,73 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
 // The Patching view: every host's patching in one place. Guests share one plan,
 // Proxmox servers each get their own day, and hosts without a backup Argus can
 // see are listed with what to do.
+// Patch several hosts in one go: the ones with security updates are ticked to
+// begin with. Each is patched as its own page's Patch now would: by its plan, with
+// its safety net, one host at a time.
+function UpdatesWaiting({ hosts, session, reload }) {
+  const rows = updatesWaiting(hosts);
+  const [picked, setPicked] = useState(null); // null: the default, until the owner chooses
+  const [busy, setBusy] = useState(false);
+  const [errors, setErrors] = useState([]);
+  if (rows.length === 0) return null;
+  const can = rows.filter((r) => !r.why && !r.state);
+  const chosen = (picked ?? pickedByDefault(rows)).filter((n) => can.some((r) => r.name === n));
+  const secure = can.filter((r) => r.security > 0);
+  const moving = rows.filter((r) => r.state).length;
+  const flip = (name) => setPicked(chosen.includes(name) ? chosen.filter((n) => n !== name) : [...chosen, name]);
+  const go = async () => {
+    setBusy(true); setErrors([]);
+    const failed = [];
+    for (const name of chosen) {
+      try { await send("POST", `/api/patching/${name}/now`, {}, session.csrf); }
+      catch (e) { failed.push(`${name}: ${e.message}`); }
+    }
+    setErrors(failed); setPicked([]); setBusy(false);
+    reload();
+  };
+  const count = (r) => `${r.pending} update${r.pending === 1 ? "" : "s"}${r.security ? `, ${r.security} security` : ""}`;
+  return (
+    <Section title={`updates waiting (${rows.length})`}
+      about="Patch now for several hosts at once. Each host is patched by its own plan (how far updates go, whether it may reboot) and only with its safety net in place, one host at a time, so a long list takes a while. A host that is off, monitoring only, patched by something else or without a recent backup cannot be ticked. A Proxmox server is never ticked for you: its update can restart every guest on it.">
+      {session?.signed_in && can.length > 0 && (
+        <p className="small pick-line">
+          <span className="muted">Select</span>
+          {secure.length > 0 && <button className="link-button" onClick={() => setPicked(secure.map((r) => r.name))}>with security updates ({secure.length})</button>}
+          <button className="link-button" onClick={() => setPicked(can.map((r) => r.name))}>all ({can.length})</button>
+          <button className="link-button" onClick={() => setPicked([])}>none</button>
+        </p>
+      )}
+      <ul className="rows pick-rows">{rows.map((r) => (
+        <li key={r.name}>
+          {session?.signed_in
+            ? <input type="checkbox" aria-label={`Patch ${r.name}`} checked={chosen.includes(r.name)}
+                     disabled={busy || Boolean(r.why || r.state)} onChange={() => flip(r.name)} />
+            : <span className={`dot dot-${r.security ? "failing" : "unknown"}`} />}
+          <span className="row-main">
+            <a className="quiet-link" href={`#/hosts?host=${encodeURIComponent(r.name)}&tab=patching`}>{r.name}</a>
+            {r.server && <span className="chip">Proxmox server</span>}
+            <span className="muted row-sub">{r.why ? `Cannot be patched from here: ${r.why}` : `Takes ${r.host.patching.allowed}`}</span>
+          </span>
+          <span className="row-note">
+            {r.urgent && <span className="tag tag-down">urgent fix</span>}
+            <span className={`tag tag-${r.security ? "failing" : "unknown"}`}>{count(r)}</span>
+          </span>
+          <span className={`row-note ${r.state ? "st-up" : "muted"}`}>{r.state ?? ""}</span>
+        </li>))}
+      </ul>
+      {session?.signed_in && (
+        <div className="actions">
+          <button className="btn btn-primary" disabled={busy || chosen.length === 0} onClick={go}>
+            {chosen.length === 0 ? "Patch now" : `Patch ${chosen.length} host${chosen.length === 1 ? "" : "s"} now`}</button>
+          <span className="muted small">
+            {moving > 0 ? `${moving} on ${moving === 1 ? "its" : "their"} way. ` : ""}One host at a time, each by its own plan.</span>
+        </div>
+      )}
+      {errors.map((e) => <p key={e} className="form-error" role="alert">{e}</p>)}
+    </Section>
+  );
+}
+
 function PatchPlan({ hosts, backups, session, reload }) {
   const [plan, setPlan] = useState({ day: 0, time: "03:00", level: "full", reboot: true, backup_days: 8 });
   const [busy, setBusy] = useState(false);
@@ -1502,6 +1569,7 @@ function PatchPlan({ hosts, backups, session, reload }) {
   const set = (k) => (e) => setPlan({ ...plan, [k]: k === "day" || k === "backup_days" ? Number(e.target.value) : e.target.value });
   return (
     <div className="patch-plan">
+      <UpdatesWaiting hosts={hosts} session={session} reload={reload} />
       {(servers.length > 0 || guests.length > 0) && <Section title={`guests (${guests.length})`}
         about="Each guest is patched with all its updates and rebooted when an update needs it, one guest at a time, only when its Proxmox backup is recent. Change any one guest on its own page.">
         {ready.length === 0 ? (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss, hostStatus, hostTone } from "./lib.js";
+import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss, hostStatus, hostTone, updatesWaiting, pickedByDefault } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -452,4 +452,26 @@ it("a host whose reports Argus refuses is not called quiet", () => {
   // Still inside the quiet limit: the old report shows, and the dot is already red.
   expect(hostTone({ ...host, status: "ok" })).toBe("down");
   expect(hostStatus({ status: "quiet", age: 900 })).toEqual(["down", "gone quiet"]);
+});
+
+it("hosts with security updates are ticked for patching, when they can be patched", () => {
+  const h = (name, pending, security, more = {}) => ({
+    name, status: "ok", report: { updates: { pending, security }, ...more.report },
+    patching: { plan: {}, safety: { ok: true }, runs: [], ...more.patching }, ...more.host });
+  const rows = updatesWaiting([
+    h("zeta", 3, 0), h("nas", 4, 3), h("clean", 0, 0),
+    h("bare", 2, 2, { patching: { safety: { ok: false } } }),
+    h("other", 2, 1, { patching: { plan: { elsewhere: true } } }),
+    h("look", 5, 5, { host: { read_only: true } }),
+    h("pve", 9, 4, { report: { proxmox: { guests: [] } } }),
+    h("busy", 1, 1, { patching: { runs: [{ result: "running" }] } }),
+    h("queued", 1, 1, { patching: { requested: true } }),
+  ]);
+  expect(rows.map((r) => r.name)).toEqual(["bare", "busy", "look", "nas", "other", "pve", "queued", "zeta"]);
+  expect(Object.fromEntries(rows.filter((r) => r.why).map((r) => [r.name, r.why]))).toEqual({
+    bare: "no recent backup", look: "monitoring only", other: "patched by something else" });
+  expect(rows.find((r) => r.name === "busy").state).toBe("patching now");
+  expect(rows.find((r) => r.name === "queued").state).toBe("waiting its turn");
+  // Not the Proxmox server, not one already on its way, not one without security updates.
+  expect(pickedByDefault(rows)).toEqual(["nas"]);
 });

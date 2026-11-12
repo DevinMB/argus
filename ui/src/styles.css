@@ -1056,3 +1056,15 @@ a.tag-link:hover { filter: brightness(1.25); text-decoration: underline; }
 .refused p { margin: 0 0 6px; }
 .refused p:last-child { margin-bottom: 0; }
 .refused-why { font: 12px var(--mono); color: var(--down); overflow-wrap: anywhere; }
+
+/* Hosts, Patching: tick the hosts to patch now. */
+.pick-line { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; margin: 0 0 8px; }
+.pick-rows li { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, auto); }
+.pick-rows input[type="checkbox"] { accent-color: var(--accent); width: 17px; height: 17px; margin: 0; }
+.pick-rows .row-main { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.pick-rows .row-sub { flex-basis: 100%; font-size: 12.5px; }
+.pick-rows .row-note { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+@media (max-width: 560px) {
+  .pick-rows li { grid-template-columns: auto minmax(0, 1fr); }
+  .pick-rows .row-note { grid-column: 2; justify-content: flex-start; }
+}
