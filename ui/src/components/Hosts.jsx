@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
 import UrgentRule from "./UrgentRule.jsx";
-import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostTone, attentionTab, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
+import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostStatus, hostTone, attentionTab, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
 
-const STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
 const FIRST_CONTAINERS = 8;
 const FIRST_IDS = 6; // advisory and CVE ids shown per update before "and N more"
 
@@ -712,10 +711,29 @@ function Tags({ items, empty = "all good", host, here }) {
     : <span key={text} className={`tag tag-${tone}`}>{text}</span>))}</span>;
 }
 
+// Argus could not take what this host sent. The host is fine; say what was wrong
+// with the report and what to do, since the only other place it is written is the
+// companion's own log.
+function Refused({ host }) {
+  const { why } = host.refused;
+  return (
+    <div className="refused" role="status">
+      <p><strong>Argus cannot read this host's reports.</strong> The host is running and its companion
+        is sending, but Argus has refused every report for {agoText(host.refused.for).replace(/ ago$/, "").replace("just now", "the last minute")}.
+        {host.report ? " What you see below is from the last report it could read." : ""}</p>
+      <p className="refused-why">{why}</p>
+      <p className="muted small">This is usually a companion and an Argus on different versions: update Argus
+        (Settings, Account), and the host follows by itself. If it stays,{" "}
+        <a href="https://github.com/DevinMB/argus/issues/new?template=bug.yml" target="_blank" rel="noreferrer">report it</a>{" "}
+        with the line above.</p>
+    </div>
+  );
+}
+
 const open = (name, tab) => { window.location.hash = `/hosts?host=${encodeURIComponent(name)}${tab ? `&tab=${tab}` : ""}`; };
 
 function HostRow({ host, guest, child, toggle }) {
-  const [tone, word] = STATUS[host.status];
+  const [tone, word] = hostStatus(host);
   const [ptone, ptext] = patchLabel(host);
   return (
     <div className={`fleet-row${child ? " fleet-child" : ""}`}>
@@ -1387,7 +1405,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
   const r = host.report ?? {};
   const [manage, setManage] = useState(null);
   useEffect(() => setManage(null), [host.id]);
-  const [tone, word] = STATUS[host.status];
+  const [tone, word] = hostStatus(host);
   const tabs = [["overview", "Overview"]];
   if (r.containers) tabs.push(["containers", `Containers (${r.containers.length})`]);
   if (r.proxmox) tabs.push(["guests", `Guests (${r.proxmox.guests.length})`]);
@@ -1403,8 +1421,9 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
         <span className={`st-${tone}`}>{word}</span>
         {host.read_only && <span className="chip">monitoring only</span>}
         <ManageMenu host={host} session={session} onPick={setManage} />
-        <span className="muted small hd-seen">{host.last_seen ? `reported ${agoText(host.age)}` : "waiting for its first report"}</span>
+        <span className="muted small hd-seen">{host.last_seen ? `${host.refused ? "last read" : "reported"} ${agoText(host.age)}` : "waiting for its first report"}</span>
       </header>
+      {host.refused && <Refused host={host} />}
       {host.report && <>
         <p className="muted hd-sub">{[r.os, host.address].filter(Boolean).join(" · ")}</p>
         {/* The details someone debugging wants, quieter than what the host is. */}

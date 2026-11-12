@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss } from "./lib.js";
+import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss, hostStatus, hostTone } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -443,4 +443,13 @@ describe("cvss", () => {
     expect(cvss(2.1)).toMatchObject({ label: "2.1 low", tone: "quiet" });
     expect(cvss(undefined)).toBeNull();
   });
+});
+
+it("a host whose reports Argus refuses is not called quiet", () => {
+  const host = { status: "quiet", age: 900, report: {}, refused: { since: 1, why: "disks: bad", for: 900 } };
+  expect(attention(host)).toEqual([["down", "report refused"]]);
+  expect(hostStatus(host)).toEqual(["down", "report refused"]);
+  // Still inside the quiet limit: the old report shows, and the dot is already red.
+  expect(hostTone({ ...host, status: "ok" })).toBe("down");
+  expect(hostStatus({ status: "quiet", age: 900 })).toEqual(["down", "gone quiet"]);
 });
