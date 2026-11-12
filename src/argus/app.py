@@ -636,7 +636,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             rt.store.db, client, rt.clock,
             lambda: {c.get("image", "") for v in rt.companions.views()
                      for c in (v["report"] or {}).get("containers") or []
-                     if c.get("image_digests")})
+                     if c.get("image_digests") and c.get("state") == "running"})
         app.state.adoption = Adoption(settings, deploys, rt.clock)
         app.state.guests = GuestInstalls(rt.clock)
         app.state.uninstalls = Uninstalls(settings, rt.clock)
@@ -1396,7 +1396,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             # Containers whose registry now serves a newer image under their tag.
             v["images_behind"] = sorted(
                 c["name"] for c in (v["report"] or {}).get("containers") or []
-                if request.app.state.images.behind(c.get("image", ""), c.get("image_digests")))
+                if c.get("state") == "running"  # not a one-off that exited months ago
+                and request.app.state.images.behind(c.get("image", ""), c.get("image_digests")))
             v["uninstall"] = request.app.state.uninstalls.view(v["id"])
         named = {c.companion for c in r.config.checks if c.companion}
         return {"companions": views, "backups": backups,

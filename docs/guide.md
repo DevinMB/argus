@@ -73,7 +73,7 @@ On **Hosts**, press **Add a host** and run the command it shows on the host. It 
 - A host that misses three reports, or a disk past 95%, alerts you.
 - `argus-companion report` prints what it would send, without sending it.
 
-**A newer image is out.** A host's Containers tab marks a container **newer image out** when its registry now serves a newer image under the same tag (`postgres:16`, `:latest`) than the one running. Argus asks the registry itself, every six hours, without pulling. Pull it in the stack's folder (`docker compose pull && docker compose up -d`), or let the stack's next deploy do it. A tag that names one exact version never moves, so it never shows this: for those, keep the stack in git and let Dependabot propose the next version.
+**A newer image is out.** A host's Containers tab marks a container **newer image out** when its registry now serves a newer image under the same tag (`postgres:16`, `:latest`) than the one running. Only running containers are marked, not a one-off that exited. Argus asks the registry itself, every six hours, without pulling. Pull it in the stack's folder (`docker compose pull && docker compose up -d`), or let the stack's next deploy do it. A tag that names one exact version never moves, so it never shows this: for those, keep the stack in git and let Dependabot propose the next version.
 
 ## Deploys
 

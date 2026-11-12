@@ -32,6 +32,7 @@ log = logging.getLogger("argus.images")
 EVERY = 600  # how often the loop looks for work
 AGAIN = 6 * 3600  # how often one image is asked about
 PER_PASS = 30
+SOON = 60
 # registry in the image name -> the host that answers for it
 REGISTRIES = {
     "docker.io": "registry-1.docker.io", "index.docker.io": "registry-1.docker.io",
@@ -155,4 +156,6 @@ class Images:
                 await self.refresh()
             except Exception:  # noqa: BLE001 - a lookup must never end the loop
                 log.exception("image lookup failed")
-            await asyncio.sleep(EVERY)
+            # After a start the hosts have not reported yet: look again soon, so the
+            # first answers do not take a whole round to appear.
+            await asyncio.sleep(EVERY if self.known else SOON)
