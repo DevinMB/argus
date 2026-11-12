@@ -47,5 +47,5 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 
 - **Argus's admin can change every host** it deploys to or patches, within each host's policy. Treat the admin password like a root password, and keep Argus off the internet.
 - The data volume holds the key to every secret: back it up (or take an export) and keep the copy somewhere other than the machine Argus runs on.
-- Viewing is open on your network unless you switch it off; the dashboard shows host names, addresses and container names.
+- With viewing opened to your network (Settings, Account), anyone on it sees host names, addresses, containers and unpatched CVEs. New installs require sign-in to view.
 - The companion runs as root, because Docker and package managers need it. Its policy limits what Argus can make it do; it cannot limit a person who already has root on that host.

@@ -30,7 +30,7 @@ exact name of the host, check, port or error.
 
 ## Tone rules
 
-- Lead with the state, then the action: "slayerz-lab needs a reboot. Its next patch window reboots it."
+- Lead with the state, then the action: "nas needs a reboot. Its next patch window reboots it."
 - Describe behavior as cause and effect: "If a check fails three times in a row, Argus marks it down."
 - Name the exact thing. Say `vaultwarden :8000`, not "the service". Quote the real error text.
 - Call the reader "you". Call the product "Argus", never "we". Argus does things; it does not "try".
@@ -117,7 +117,7 @@ exact name of the host, check, port or error.
 
 **After**
 
-> slayerz-lab needs a reboot. Its next patch window reboots it, or press Patch now.
+> nas needs a reboot. Its next patch window reboots it, or press Patch now.
 
 ### Setting hint
 
