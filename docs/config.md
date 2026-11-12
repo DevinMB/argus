@@ -1,6 +1,6 @@
 # argus.yml
 
-Everything Argus watches is one YAML file. Most people never open it: **Add a check** and the Config page edit it for you, and keep its comments and layout. It can live in Argus, in a GitHub repo, or as a mounted file ([guide](guide.md#config)). Argus checks every change before using it; a file with a mistake is refused and the running config stays.
+Everything Argus watches is one YAML file. Most people never open it: **Add a check** and the Config page edit it for you, and keep its comments and layout. It can live in Argus, in a GitHub repo, or as a mounted file ([guide](guide.md#checks)). Argus checks every change before using it; a file with a mistake is refused and the running config stays.
 
 ```yaml
 checks:
