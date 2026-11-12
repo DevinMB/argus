@@ -553,6 +553,19 @@ def test_an_update_that_fixes_hundreds_of_cves_does_not_silence_its_host():
 
 
 
+def test_only_a_running_container_is_marked_as_behind_its_image(client, csrf):
+    me = enroll(client, new_code(client, csrf)["code"]).json()
+    old, new = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    report(client, me["token"], containers=[
+        {"name": "web", "image": "nginx:1", "state": "running", "image_digests": [old]},
+        {"name": "one-off", "image": "hello-world", "state": "exited",
+         "image_digests": [old]}])
+    images = client.app.state.images
+    assert set(images.wanted()) == {"nginx:1"}  # nobody asks about a container that exited
+    images.known = {"nginx:1": (new, 0), "hello-world": (new, 0)}
+    assert client.get("/api/companions").json()["companions"][0]["images_behind"] == ["web"]
+
+
 def test_a_host_whose_report_argus_refuses_says_so_instead_of_going_quiet(
         client, csrf, rt, clock, tmp_path):
     me = enroll(client, new_code(client, csrf)["code"]).json()
