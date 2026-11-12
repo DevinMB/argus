@@ -47,6 +47,8 @@ SIGNING_KEY = "companions.signing_key"
 DOMAIN = b"argus-companion-reply-v1\n"
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
+MAX_WHY = 300
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companion_codes (
     code_hash TEXT PRIMARY KEY, created REAL NOT NULL, expires REAL NOT NULL,
@@ -55,7 +57,8 @@ CREATE TABLE IF NOT EXISTS companion_codes (
 CREATE TABLE IF NOT EXISTS companions (
     id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL UNIQUE,
     enrolled REAL NOT NULL, last_seen REAL, address TEXT NOT NULL DEFAULT '',
-    read_only INTEGER NOT NULL, report TEXT, ignored TEXT NOT NULL DEFAULT '[]'
+    read_only INTEGER NOT NULL, report TEXT, ignored TEXT NOT NULL DEFAULT '[]',
+    refused TEXT
 );
 """
 
@@ -90,6 +93,9 @@ class Companions:
             with self.db:
                 self.db.execute("ALTER TABLE companions"
                                 " ADD COLUMN ignored TEXT NOT NULL DEFAULT '[]'")
+        if "refused" not in cols:  # installs from before a refused report was shown
+            with self.db:
+                self.db.execute("ALTER TABLE companions ADD COLUMN refused TEXT")
 
     # --- enrollment ---
 
@@ -177,8 +183,22 @@ class Companions:
             if before.get("proxmox"):
                 report = {**report, "proxmox": before["proxmox"]}
         with self.db:
-            self.db.execute("UPDATE companions SET last_seen = ?, address = ?, report = ?"
+            self.db.execute("UPDATE companions SET last_seen = ?, address = ?, report = ?,"
+                            " refused = NULL"
                             " WHERE id = ?", (self.clock(), address, json.dumps(report), cid))
+
+    def refuse(self, cid: str, why: str) -> None:
+        """Argus could not take this host's report. Without this the host would only
+        go quiet, as if it were off, while its companion logs the reason on a machine
+        nobody is looking at. Kept from the first refusal until a report is accepted."""
+        with self.db:
+            row = self.db.execute("SELECT refused FROM companions WHERE id = ?",
+                                  (cid,)).fetchone()
+            if row is None:
+                return
+            since = json.loads(row["refused"])["since"] if row["refused"] else self.clock()
+            self.db.execute("UPDATE companions SET refused = ? WHERE id = ?", (json.dumps(
+                {"since": since, "at": self.clock(), "why": why[:MAX_WHY]}), cid))
 
     def views(self) -> list[dict]:
         """Every companion with its newest report and a status: waiting (enrolled,
@@ -188,11 +208,13 @@ class Companions:
             seen = r["last_seen"]
             status = "waiting" if seen is None else (
                 "quiet" if now - seen > QUIET_AFTER else "ok")
+            refused = json.loads(r["refused"]) if r["refused"] else None
             out.append({"id": r["id"], "name": r["name"], "enrolled": r["enrolled"],
                         "last_seen": seen, "age": seen and now - seen, "status": status,
                         "address": r["address"], "read_only": bool(r["read_only"]),
                         "report": json.loads(r["report"]) if r["report"] else None,
-                        "ignored": json.loads(r["ignored"])})
+                        "ignored": json.loads(r["ignored"]),
+                        "refused": refused and {**refused, "for": now - refused["since"]}})
         return out
 
     def ignore(self, cid: str, container: str, ignored: bool) -> list[str] | None:

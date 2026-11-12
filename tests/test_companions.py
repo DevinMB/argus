@@ -564,3 +564,27 @@ def test_only_a_running_container_is_marked_as_behind_its_image(client, csrf):
     assert set(images.wanted()) == {"nginx:1"}  # nobody asks about a container that exited
     images.known = {"nginx:1": (new, 0), "hello-world": (new, 0)}
     assert client.get("/api/companions").json()["companions"][0]["images_behind"] == ["web"]
+
+
+def test_a_host_whose_report_argus_refuses_says_so_instead_of_going_quiet(
+        client, csrf, rt, clock, tmp_path):
+    me = enroll(client, new_code(client, csrf)["code"]).json()
+    report(client, me["token"], kernel="6.8")
+    r, _ = report(client, me["token"], kernel="6.9", disks="not a list")
+    assert r.status_code == 422
+    host = client.get("/api/companions").json()["companions"][0]
+    assert host["refused"]["why"].startswith("disks: ")
+    assert "not a list" not in host["refused"]["why"]  # where and why, never what it sent
+    assert host["report"]["kernel"] == "6.8"  # the last report Argus could read stays
+    since = host["refused"]["since"]
+    clock.now += QUIET_AFTER + 1
+    report(client, me["token"], disks="still not a list")
+    host = client.get("/api/companions").json()["companions"][0]
+    assert host["status"] == "quiet" and host["refused"]["since"] == since
+    settings = Settings(rt.store.db, load_key(tmp_path / "argus.key"))
+    p = Alerter(rt, settings, httpx.AsyncClient()).problems()["companion:nas"]
+    assert p.title == "Argus cannot read host nas's reports"
+    assert "The host is running" in p.detail and "disks: " in p.detail
+    report(client, me["token"], kernel="6.9")
+    host = client.get("/api/companions").json()["companions"][0]
+    assert host["refused"] is None and host["status"] == "ok"
