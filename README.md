@@ -4,7 +4,7 @@
 
 Argus checks your services and alerts you when one stops answering. A small companion on each host shows its containers, disks and pending updates, patches it in a weekly window once it has a recent backup, and deploys your Compose stacks from git when you merge. No Prometheus, Grafana or Alertmanager needed, and no config files unless you want them.
 
-![The Argus home page: a ring of every check, one of them down, and the services Argus suggests watching](docs/screenshots/home.png)
+![The Argus home page: a ring of every check with one down, a line saying that nothing that alerts you is down, and the services Argus suggests watching](docs/screenshots/home.png)
 
 ## What it does
 
@@ -15,9 +15,31 @@ Argus checks your services and alerts you when one stops answering. A small comp
 - **Follows your apps' updates** on GitHub: Dependabot's PRs, CI, merges and builds, to "running on its host".
 - **Guides you in.** A new install opens on a short checklist that takes you from nothing to your first host watched, patched and deploying.
 
-![Hosts: what needs a look on each, and when it is patched](docs/screenshots/hosts.png)
+## A look around
+
+**Every host on one page**, with what needs a look on each and when it is patched. Each tag leads to its cause.
+
+![Hosts: three hosts, with tags for a container that is down, a full disk and an urgent security fix, and each host's patch day](docs/screenshots/hosts.png)
+
+**One host:** its disks and pending updates. Every CVE an update fixes carries its severity score, and a fix for a flaw that is being exploited is marked.
 
 ![One host: its disks and pending security updates, each CVE with its severity score, and one fix marked as being exploited](docs/screenshots/host.png)
+
+**Urgent fixes do not wait for the weekly window.** The host's Patching tab says what goes in tonight and why.
+
+![A host's Patching tab: all updates on Tuesdays at 03:00, and an urgent fix for sudo that Argus installs tonight](docs/screenshots/host-patching.png)
+
+**You set the rules:** a day and an hour per host, the backup it needs first, and how serious a flaw must be to go in the same night.
+
+![Hosts, Patching: each host's schedule and safety net, and the rule for urgent security fixes](docs/screenshots/patching.png)
+
+**Containers**, with a note when a registry serves a newer image under the tag one of them runs.
+
+![A host's Containers tab: five containers, one marked "newer image out"](docs/screenshots/containers.png)
+
+**On a phone** it is the same page, not a cut-down one.
+
+<img src="docs/screenshots/phone.png" width="320" alt="The Hosts page on a phone">
 
 ## Quick start
 
