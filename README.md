@@ -6,6 +6,20 @@ Argus checks your services and alerts you when one stops answering. A small comp
 
 ![The Argus home page: a ring of every check with one down, a line saying that nothing that alerts you is down, and the services Argus suggests watching](docs/screenshots/home.png)
 
+## Why Argus
+
+A homelab starts as a weekend project and ends up running things people rely on: the photo library, the password manager, the lights, the family's media. Every one of those apps, containers and servers needs security updates, all the time. Done by hand, that is hours of careful, repetitive work each week, so it slips. And a server that is weeks behind on updates is exactly what attackers look for: flaws are often used in real attacks within days of their fix coming out.
+
+Turning on automatic updates is not the answer on its own. An update that breaks a machine with no way back is how people lose a weekend, or their data, and then turn updates off again.
+
+Argus does the job the way a careful IT team would, without the team:
+
+- **Nothing is patched without a way back.** A host is updated only when it has a recent backup or snapshot to return to, one host at a time, and a run that fails tells you. A stack deployed from git that does not come up healthy is rolled back on its own.
+- **The dangerous fixes do not wait.** A fix for a flaw that is being exploited, or is rated critical, goes in that same night instead of at the next weekly window.
+- **You hear about it only when you are needed.** Argus checks every service every minute and keeps the rest to its pages; your phone gets a message when something is down or a decision is yours.
+
+It is named for the hundred-eyed giant of Greek myth, who never slept with all his eyes at once.
+
 ## What it does
 
 - **Watches** anything with a URL, a port or an address, every minute; three failures in a row and it alerts you on Telegram (or hands off to your Prometheus). Pause one you already know is down.
