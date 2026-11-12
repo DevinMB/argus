@@ -702,3 +702,41 @@ export function advisoryUrl(id, os = "") {
   }
   return null;
 }
+
+// ---- patching several hosts at once (Hosts, Patching) ----
+
+// Why Patch now is not offered for a host, or null when it is. The server has
+// the last word; this keeps a row that cannot run from being ticked at all.
+export function cannotPatch(host) {
+  const pt = host.patching;
+  if (host.status !== "ok") return "not reporting";
+  if (host.read_only) return "monitoring only";
+  if (!pt) return "no patch plan";
+  if (pt.plan.elsewhere) return "patched by something else";
+  if (!pt.safety.ok) return "no recent backup";
+  return null;
+}
+
+// Every host with updates waiting, the ones with security updates first. Each
+// row says whether it can be patched now, and whether it is already on its way.
+export function updatesWaiting(hosts) {
+  return hosts
+    .filter((h) => (h.report?.updates?.pending ?? 0) > 0)
+    .map((h) => {
+      const u = h.report.updates;
+      const last = h.patching?.runs?.[0];
+      const state = last && (last.result === "granted" || last.result === "running") ? "patching now"
+        : h.patching?.requested ? "waiting its turn" : null;
+      return { host: h, name: h.name, pending: u.pending, security: u.security ?? 0,
+               urgent: (h.patching?.urgent?.pending ?? []).length > 0,
+               server: Boolean(h.report.proxmox), why: cannotPatch(h), state };
+    })
+    .sort((a, b) => (b.security > 0) - (a.security > 0) || a.name.localeCompare(b.name));
+}
+
+// What is ticked before the owner touches anything: every host with a security
+// update that can be patched now. A Proxmox server is never ticked for them:
+// its update restarts every guest on it, so that is chosen, not defaulted.
+export function pickedByDefault(rows) {
+  return rows.filter((r) => r.security > 0 && !r.why && !r.state && !r.server).map((r) => r.name);
+}
