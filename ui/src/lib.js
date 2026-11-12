@@ -486,7 +486,9 @@ export function attention(host) {
   if (host.status === "waiting") return [["unknown", "waiting for its first report"]];
   const r = host.report ?? {};
   const out = [];
-  if (host.status === "quiet") out.push(["down", `quiet ${agoText(host.age)}`]);
+  // A refused report is the reason a host is quiet, so it replaces that tag.
+  if (host.refused) out.push(["down", "report refused"]);
+  else if (host.status === "quiet") out.push(["down", `quiet ${agoText(host.age)}`]);
   if (host.companion_stale) out.push(["failing", "companion out of date"]);
   const ignored = host.ignored ?? [];
   const bad = (r.containers ?? []).filter((c) => !ignored.includes(c.name) && containerTrouble(c)).length;
@@ -515,6 +517,13 @@ export function hostTone(host) {
   if (host.status === "waiting") return "unknown";
   const tones = attention(host).map(([t]) => t);
   return tones.includes("down") ? "down" : tones.includes("failing") ? "failing" : "up";
+}
+
+// The word next to a host's name. A host whose reports Argus refuses is running,
+// so it is never called "gone quiet".
+const HOST_STATUS = { ok: ["up", "reporting"], quiet: ["down", "gone quiet"], waiting: ["unknown", "waiting"] };
+export function hostStatus(host) {
+  return host.refused ? ["down", "report refused"] : HOST_STATUS[host.status];
 }
 
 // Which of the host's tabs shows what a "needs a look" tag is about.

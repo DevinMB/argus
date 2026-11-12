@@ -1050,3 +1050,9 @@ a.tag-link:hover { filter: brightness(1.25); text-decoration: underline; }
 @keyframes settle-in { from { opacity: 0; transform: translateY(2px); } }
 .dot { transition: background-color 0.3s; }
 .bar > span { transition: width 0.4s var(--ease-out); }
+
+/* A host whose reports Argus refuses: what was wrong, in the host's own words. */
+.refused { margin: 12px 0 4px; padding: 12px 14px; border: 1px solid rgb(255 107 94 / 0.45); border-radius: 10px; background: rgb(255 107 94 / 0.06); }
+.refused p { margin: 0 0 6px; }
+.refused p:last-child { margin-bottom: 0; }
+.refused-why { font: 12px var(--mono); color: var(--down); overflow-wrap: anywhere; }
