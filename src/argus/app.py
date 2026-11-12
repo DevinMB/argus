@@ -599,6 +599,16 @@ class NewApp(BaseModel):
     _url = field_validator("url")(_http_url)
 
 
+def why_refused(e: ValidationError) -> str:
+    """One line on what in a report Argus could not take: where, and the rule it
+    broke. Never the value itself, which is whatever the host sent."""
+    errs = e.errors(include_url=False, include_context=False, include_input=False)
+    first = errs[0]
+    where = ".".join(str(x) for x in first["loc"]) or "the report"
+    more = f" (and {len(errs) - 1} more)" if len(errs) > 1 else ""
+    return f"{where}: {first['msg']}{more}"
+
+
 def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
                poller: github.Poller | None = None,
                alert_client: httpx.AsyncClient | None = None,
@@ -1592,10 +1602,14 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             raise HTTPException(401, "unknown companion token; enroll this host again")
         body = await request.body()
         if len(body) > MAX_COMPANION_REPORT:
+            r.companions.refuse(row["id"], f"the report is {len(body) // 1024} KB; Argus takes"
+                                           f" up to {MAX_COMPANION_REPORT // 1024} KB")
             raise HTTPException(413, "report too large")
         try:
             rep = Report.model_validate_json(body)
         except ValidationError as e:
+            # Say so on the host's page: a refused host otherwise just goes quiet.
+            r.companions.refuse(row["id"], why_refused(e))
             raise HTTPException(422, e.errors(include_url=False, include_context=False)) from None
         for c in rep.checks:
             r.record_remote(row["name"], c.name, Result(c.ok, c.duration, c.error))

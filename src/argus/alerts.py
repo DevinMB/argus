@@ -315,6 +315,16 @@ class Alerter:
                         f"PR #{f['pr']}, {how}.", "#/updates")
         if rules["companions"]:
             for c in rt.companions.views():
+                if c["status"] == "quiet" and c["refused"]:
+                    # The host is up and sending; saying "gone quiet" would send its
+                    # owner to look at a machine that is fine.
+                    out[f"companion:{c['name']}"] = Problem(
+                        f"Argus cannot read host {c['name']}'s reports",
+                        f"The host is running, but Argus has refused its reports for"
+                        f" {_ago(now - c['refused']['since'])}:"
+                        f" {c['refused']['why']}. Update Argus; the host's page says"
+                        " more.", "#/hosts")
+                    continue
                 if c["status"] == "quiet":
                     out[f"companion:{c['name']}"] = Problem(
                         f"host {c['name']} has gone quiet",
