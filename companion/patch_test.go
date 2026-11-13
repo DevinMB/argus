@@ -114,6 +114,46 @@ func TestARunInterruptedByARestartIsSettledFromWhatIsPending(t *testing.T) {
 	}
 }
 
+func TestAnInterruptedRunThatAllowedARebootStillReboots(t *testing.T) {
+	if !has("apt-get") && !has("dnf") && !has("apk") {
+		t.Skip("no package manager on this machine")
+	}
+	// mars-b: Patch now installed everything, the companion restarted mid-run,
+	// and the host kept saying "needs a reboot" however often it was patched.
+	p, _, reboots := newTestPatcher(t, true)
+	p.pkgBusy = func() bool { return false }
+	p.save(&PatchState{Run: 12, State: "running", At: 1, Reboot: true})
+	p.AfterBoot()
+	if s := p.State(); s.State != "rebooting" || *reboots != 1 {
+		t.Fatalf("got %+v after %d reboots", s, *reboots)
+	}
+
+	p, _, reboots = newTestPatcher(t, true)
+	p.pkgBusy = func() bool { return false }
+	p.save(&PatchState{Run: 13, State: "running", At: 1})
+	p.AfterBoot()
+	if s := p.State(); s.State != "ok" || *reboots != 0 || !strings.Contains(s.Summary, "left for its next window") {
+		t.Fatalf("a run that did not allow a reboot rebooted: %+v", s)
+	}
+}
+
+func TestUnattendedUpgradesWaitingForShutdownIsNotAPackageManagerAtWork(t *testing.T) {
+	proc := t.TempDir()
+	write := func(pid, comm, cmdline string) {
+		_ = os.MkdirAll(filepath.Join(proc, pid), 0o755)
+		_ = os.WriteFile(filepath.Join(proc, pid, "comm"), []byte(comm+"\n"), 0o644)
+		_ = os.WriteFile(filepath.Join(proc, pid, "cmdline"), []byte(cmdline), 0o644)
+	}
+	write("812", "unattended-upgr", "/usr/bin/python3\x00/usr/share/unattended-upgrades/unattended-upgrade-shutdown\x00--wait-for-signal\x00")
+	if pkgBusyProc(proc) {
+		t.Fatal("Ubuntu's always-running shutdown helper counted as apt at work")
+	}
+	write("4100", "unattended-upgr", "/usr/bin/python3\x00/usr/bin/unattended-upgrade\x00")
+	if !pkgBusyProc(proc) {
+		t.Fatal("a real unattended-upgrade run was missed")
+	}
+}
+
 func TestAStaleRunningRecordDoesNotMakeTheCompanionBusy(t *testing.T) {
 	// A record left "running" by a restart blocked patching and self-updates for good.
 	p, _, _ := newTestPatcher(t, false)
