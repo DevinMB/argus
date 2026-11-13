@@ -53,7 +53,7 @@ Argus has version numbers (`1.4.2`). A patch release fixes something, a minor re
 - **Without a companion there,** run `docker compose pull && docker compose up -d` beside Argus's `compose.yml`.
 - **A new major version** is never pulled for you. Change the tag in `compose.yml` (`:2`) after reading its notes.
 
-Companions update themselves within a minute or two of a new Argus, checking each download against a signature from Argus. Hosts that do not (monitoring-only hosts, or `"manual_updates": true` in the host's policy) show **companion out of date**, with a **Reinstall companion** button.
+Companions update themselves within a few minutes of a new Argus, checking each download against a signature from Argus. **Settings, Account** lists them under Argus's version, with why any is behind. One that does not update itself (a monitoring-only host, or `"manual_updates": true` in the host's policy) has a **Reinstall companion** button on its host's page.
 
 ## Remove Argus
 

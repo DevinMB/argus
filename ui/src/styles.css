@@ -867,6 +867,9 @@ details.plumbing[open] > summary { margin-bottom: 4px; }
 .dstep-body .field-row select { flex: 1; font-family: var(--sans); }
 .dhost { display: grid; gap: 4px; }
 .dhost .rows li { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.companions { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.companions h3 { margin: 0 0 4px; font-weight: 600; }
+.companion-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
 .changes { margin: 0; padding-left: 18px; display: grid; gap: 3px; color: var(--muted); max-height: 14em; overflow: auto; }
 .row-main .chip { margin-left: 8px; vertical-align: 1px; }
 .secret-saved { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13.5px; }

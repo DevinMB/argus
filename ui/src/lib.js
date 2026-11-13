@@ -489,7 +489,8 @@ export function attention(host) {
   // A refused report is the reason a host is quiet, so it replaces that tag.
   if (host.refused) out.push(["down", "report refused"]);
   else if (host.status === "quiet") out.push(["down", `quiet ${agoText(host.age)}`]);
-  if (host.companion_stale) out.push(["failing", "companion out of date"]);
+  // A companion behind Argus is housekeeping, not a host at risk: Settings lists
+  // it beside Update Argus, and the host's own page offers the reinstall.
   const ignored = host.ignored ?? [];
   const bad = (r.containers ?? []).filter((c) => !ignored.includes(c.name) && containerTrouble(c)).length;
   if (bad) out.push(["down", `${bad} container${bad === 1 ? "" : "s"} down`]);
@@ -739,4 +740,20 @@ export function updatesWaiting(hosts) {
 // its update restarts every guest on it, so that is chosen, not defaulted.
 export function pickedByDefault(rows) {
   return rows.filter((r) => r.security > 0 && !r.why && !r.state && !r.server).map((r) => r.name);
+}
+
+// Settings, Argus and companions: one line for every host's companion, and the
+// ones behind Argus's build. current is null on a development build (no verdict).
+export function companionsSummary(rows) {
+  const behind = rows.filter((r) => r.current === false);
+  const versions = [...new Set(rows.map((r) => r.version).filter(Boolean))];
+  const n = rows.length;
+  if (!rows.some((r) => r.current !== null)) {
+    return { ok: false, behind: [], line: `${n} companion${n === 1 ? "" : "s"}, on ${versions.join(", ") || "an unknown version"}.` };
+  }
+  if (!behind.length) {
+    return { ok: true, behind, line: n === 1 ? `Up to date${versions.length ? `, on ${versions[0]}` : ""}.`
+      : `All ${n} up to date${versions.length === 1 ? `, on ${versions[0]}` : ""}.` };
+  }
+  return { ok: false, behind, line: `${n - behind.length} of ${n} up to date. Each updates itself a few minutes after Argus does.` };
 }

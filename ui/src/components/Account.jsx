@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { send } from "../api.js";
+import { companionsSummary } from "../lib.js";
 
 // Argus's own backup: an encrypted export, and restoring one.
 function Backup({ session }) {
@@ -80,6 +81,31 @@ function Backup({ session }) {
 const UPDATE = { waiting: "Asking the companion on Argus's machine…", running: "Updating: Argus restarts and comes back in a minute or two…",
   ok: "Updated", failed: "The update failed", rolled_back: "Rolled back" };
 
+// Each host's companion, under Argus's own version: they update themselves
+// after Argus does, so only the ones behind are listed, each with why.
+function Companions({ rows }) {
+  if (!rows.length) return null;
+  const { line, ok, behind } = companionsSummary(rows);
+  return (
+    <div className="companions">
+      <h3 className="small">Companions</h3>
+      <p className={`small${ok ? " st-up" : ""}`}>{line}</p>
+      {behind.length > 0 && (
+        <ul className="small companion-list">
+          {behind.map((r) => (
+            <li key={r.name}>
+              <a href={`#/hosts?host=${encodeURIComponent(r.name)}`}>{r.name}</a>{" "}
+              <span className="mono muted">{r.version ?? "unknown"}</span>{" "}
+              <span className={r.reinstall ? "st-failing" : "muted"}>{r.why}</span>
+              {r.reinstall && <> (<a href={`#/hosts?host=${encodeURIComponent(r.name)}`}>Reinstall on its page</a>)</>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // Argus's own version, what is new, and Update Argus (done by the companion on
 // Argus's machine, which puts the old version back if the new one is unhealthy).
 function ArgusVersion({ session }) {
@@ -99,7 +125,7 @@ function ArgusVersion({ session }) {
   const fresh = u && u.state !== "waiting" && u.state !== "running" && Date.now() / 1000 - (u.finished ?? u.at) < 86400;
   return (
     <div className="panel" id="version">
-      <h2 className="eyebrow">Argus version</h2>
+      <h2 className="eyebrow">Argus and companions</h2>
       <p>
         {v.released ? <>Running Argus <strong>{v.version}</strong>.</>
           : <>Running a development build, <span className="mono">{v.current.slice(0, 7)}</span>.</>}{" "}
@@ -142,6 +168,7 @@ function ArgusVersion({ session }) {
         </>
       ))}
       {session?.signed_in && <p><button className="link-button small" onClick={() => act("/api/argus/version/check")}>Check now</button></p>}
+      <Companions rows={v.companions ?? []} />
       {error && <p className="form-error" role="alert">{error}</p>}
     </div>
   );
