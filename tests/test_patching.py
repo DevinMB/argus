@@ -124,6 +124,23 @@ def test_one_host_at_a_time_on_any_day(env):
     assert "patch" in report(c, a, local=sun)
 
 
+def test_patch_now_behind_another_host_says_which(env):
+    # mars-b: Patch now pressed again and again said "within a minute" while
+    # another host's run held the one-at-a-time turn.
+    c, csrf, rt, clock = env
+    a, b = enroll(c, csrf, "a"), enroll(c, csrf, "b")
+    job_ok(c, rt, clock, "nas-backup")
+    for h in ("a", "b"):
+        c.put(f"/api/patching/{h}", headers=csrf, json={**PLAN, "backup": "job:nas-backup"})
+    run = report(c, a, local=TUE_0305)["patch"]
+    report(c, a, local=TUE_0305, patch={"run": run["run"], "state": "running"})
+    c.post("/api/patching/b/now", headers=csrf)
+    assert "patch" not in report(c, b, local=TUE_0305)
+    views = {v["name"]: v["patching"] for v in c.get("/api/companions").json()["companions"]}
+    assert views["b"]["requested"] and views["b"]["waiting_for"] == "a"
+    assert views["a"]["waiting_for"] is None
+
+
 def test_patch_now_stuck_runs_and_monitoring_only_hosts(env):
     c, csrf, rt, clock = env
     nas = enroll(c, csrf, "nas")

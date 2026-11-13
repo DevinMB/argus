@@ -33,6 +33,7 @@ type PatchState struct {
 	Log     string   `json:"log,omitempty"`
 	At      float64  `json:"at"`
 	Before  []string `json:"before,omitempty"` // containers running before, with health
+	Reboot  bool     `json:"reboot,omitempty"` // the grant allowed a reboot
 }
 
 type LocalTime struct {
@@ -206,7 +207,7 @@ func (p *Patcher) waitHealthy(before []string) []string {
 func (p *Patcher) Start(g *PatchGrant) {
 	p.active.Store(true)
 	defer p.active.Store(false)
-	s := &PatchState{Run: g.Run, State: "running", Before: p.healthy()}
+	s := &PatchState{Run: g.Run, State: "running", Before: p.healthy(), Reboot: g.Reboot}
 	p.save(s)
 	fail := func(why string) {
 		s.State, s.Summary = "failed", why
@@ -315,6 +316,23 @@ func (p *Patcher) finishInterrupted(s *PatchState) {
 		s.State, s.Summary = "failed", fmt.Sprintf("%s; %d update(s) still pending", note, *u.Pending)
 	}
 	if r := p.collector.rebootRequired(); r != nil && *r {
+		// The run allowed a reboot and everything went in: finish it as an
+		// uninterrupted run would, once the same containers run again. Leaving it
+		// for the next window kept mars-b on "needs a reboot" after Patch now.
+		if s.Reboot && s.State == "ok" {
+			if gone := p.waitHealthy(s.Before); len(gone) > 0 {
+				s.State, s.Summary = "failed", s.Summary+"; not running again after it: "+strings.Join(gone, ", ")
+				p.save(s)
+				return
+			}
+			s.State = "rebooting"
+			p.save(s)
+			if err := p.reboot(); err != nil {
+				s.State, s.Summary = "failed", s.Summary+"; the reboot did not start: "+err.Error()
+				p.save(s)
+			}
+			return
+		}
 		s.Summary += "; it needs a reboot, left for its next window"
 	}
 	p.save(s)
@@ -326,10 +344,19 @@ func pkgBusyProc(proc string) bool {
 		"yum": true, "unattended-upgr": true, "apk": true}
 	entries, _ := os.ReadDir(proc)
 	for _, e := range entries {
-		if b, err := os.ReadFile(filepath.Join(proc, e.Name(), "comm")); err == nil &&
-			names[strings.TrimSpace(string(b))] {
-			return true
+		b, err := os.ReadFile(filepath.Join(proc, e.Name(), "comm"))
+		if err != nil || !names[strings.TrimSpace(string(b))] {
+			continue
 		}
+		// Ubuntu's unattended-upgrades service runs unattended-upgrade-shutdown
+		// all the time, waiting for a shutdown; its name is cut to the same
+		// "unattended-upgr". It installs nothing, so it is not a package manager
+		// at work (counting it made every interrupted run wait a full hour).
+		if cmd, err := os.ReadFile(filepath.Join(proc, e.Name(), "cmdline")); err == nil &&
+			strings.Contains(string(cmd), "unattended-upgrade-shutdown") {
+			continue
+		}
+		return true
 	}
 	return false
 }

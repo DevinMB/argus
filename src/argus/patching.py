@@ -489,11 +489,14 @@ class Patching:
                   "scores": self.urgent.scores_of(
                       ((report or {}).get("updates") or {}).get("packages") or [])
                   if self.urgent is not None else {}}
+        requested = bool(self.settings.get(REQUEST + host))
+        busy = self.running() if requested else None
         return {"plan": p, "safety": safety, "runs": runs, "elsewhere": self.elsewhere(p),
                 "urgent": urgent,
                 "suggested_backup": self.suggest(host, report, backups or []),
-                "skipped": self.skipped.get(host), "requested": bool(
-                    self.settings.get(REQUEST + host)),
+                "skipped": self.skipped.get(host), "requested": requested,
+                # One host at a time: the run a requested one waits behind.
+                "waiting_for": busy["host"] if busy and busy["host"] != host else None,
                 "allowed": allowed(p) if safety["ok"] else "nothing until it has a backup"}
 
     def problems(self, hosts: list[str]) -> list[tuple[str, str, str]]:

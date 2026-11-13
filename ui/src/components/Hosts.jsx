@@ -614,7 +614,13 @@ function Patching({ host, session, refs, backups, reload }) {
         </p>
       )}
       {last?.log && last.result === "failed" && <pre className="log small">{last.log.slice(-1500)}</pre>}
-      {pt.requested && <p className="small muted">Patching on its next report, within a minute.</p>}
+      {pt.requested && (
+        <p className="small muted">
+          {pt.waiting_for
+            ? `Waiting for ${pt.waiting_for} to finish patching: Argus patches one host at a time.`
+            : "Patching on its next report, within a minute."}
+        </p>
+      )}
       {session?.signed_in && !host.read_only && !editing && (
         <div className="actions">
           <button className={`btn btn-small${pt.plan.enabled || pt.plan.elsewhere ? "" : " btn-primary"}`} onClick={() => setEditing(true)}>
