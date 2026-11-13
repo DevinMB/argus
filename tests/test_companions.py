@@ -346,6 +346,28 @@ def test_a_companion_stuck_on_an_old_build_is_named_with_the_command_that_fixes_
     assert client.get("/api/companions").json()["companions"][0]["companion_stale"] is False
 
 
+def test_settings_lists_each_companion_version_and_why_one_is_behind(
+        client, csrf, clock, monkeypatch):
+    monkeypatch.setenv("ARGUS_COMMIT", "fd5c378113c9aaaa")
+    a = enroll(client, new_code(client, csrf)["code"], "nas").json()
+    b = enroll(client, new_code(client, csrf)["code"], "pi").json()
+    report(client, a["token"], version="1.4.1+fd5c378113c9")
+    report(client, b["token"], version="1.4.0+5bfe622edb18")
+
+    def rows():
+        return {c["name"]: c for c in client.get("/api/argus/version").json()["companions"]}
+    assert rows()["nas"] == {"name": "nas", "version": "1.4.1", "current": True, "why": "",
+                             "reinstall": False}
+    assert (rows()["pi"]["current"], rows()["pi"]["why"]) == (False, "updating itself")
+    report(client, b["token"], version="1.4.0+5bfe622edb18", patch={"run": 1, "state": "running"})
+    assert rows()["pi"]["why"] == "updates itself after its patch run"
+    clock.now += 3 * 3600 + 1
+    report(client, a["token"], version="1.4.1+fd5c378113c9")
+    report(client, b["token"], version="1.4.0+5bfe622edb18")
+    pi = rows()["pi"]
+    assert "reinstall it" in pi["why"] and pi["reinstall"] is True
+
+
 def test_reinstall_companion_goes_through_the_guests_proxmox_server(client, csrf, monkeypatch):
     monkeypatch.setenv("ARGUS_COMMIT", "12d47a634a62aaaa")
     h = {"X-CSRF-Token": csrf}

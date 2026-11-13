@@ -1204,14 +1204,19 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
 
     # --- updating Argus itself, through the companion on its machine ---
 
+    def version_view(request: Request) -> dict:
+        views = rt(request).companions.views()
+        return {**request.app.state.selfupdate.view(views),
+                "companions": companion_versions(request, views)}
+
     @app.get("/api/argus/version")
     async def argus_version(request: Request) -> dict:
-        return request.app.state.selfupdate.view(rt(request).companions.views())
+        return version_view(request)
 
     @app.post("/api/argus/version/check")
     async def argus_version_check(request: Request, _: Admin) -> dict:
         await request.app.state.selfupdate.check()
-        return request.app.state.selfupdate.view(rt(request).companions.views())
+        return version_view(request)
 
     @app.post("/api/argus/update")
     async def argus_update(request: Request, _: Admin) -> dict:
@@ -1388,6 +1393,38 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
             return False
         since = behind.setdefault(v["name"], rt(request).clock())
         return rt(request).clock() - since > STALE_COMPANION
+
+    def companion_versions(request: Request, views: list[dict]) -> list[dict]:
+        """Each host's companion version, and when it is not on this Argus's build,
+        why: Settings shows these beside Update Argus, apart from the Hosts page,
+        which is about whether hosts are patched."""
+        mine = os.environ.get("ARGUS_COMMIT", "")[:12]
+        known = bool(mine) and mine != "unknown"  # a development build cannot tell
+        out = []
+        for v in views:
+            rep = v["report"] or {}
+            version = rep.get("version") or ""
+            current = version.endswith("+" + mine) if known else None
+            stale = companion_stale(request, v)
+            why = ""
+            if current is False:
+                if v["status"] == "waiting":
+                    why = "waiting for its first report"
+                elif v["status"] != "ok":
+                    why = "not reporting; it updates itself once it is back"
+                elif v["read_only"]:
+                    why = "monitoring only, so it does not update itself: reinstall it"
+                elif stale:
+                    why = "has not updated itself for hours: reinstall it"
+                elif (rep.get("patch") or {}).get("state") in ("running", "rebooting"):
+                    why = "updates itself after its patch run"
+                else:
+                    why = "updating itself"
+            out.append({"name": v["name"], "version": version.split("+")[0] or None,
+                        "current": current, "why": why,
+                        "reinstall": current is False and v["status"] == "ok"
+                        and (stale or v["read_only"])})
+        return out
 
     @app.get("/api/companions")
     async def companions(request: Request) -> dict:

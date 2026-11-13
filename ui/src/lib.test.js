@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss, hostStatus, hostTone, updatesWaiting, pickedByDefault } from "./lib.js";
+import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss, hostStatus, hostTone, updatesWaiting, pickedByDefault , companionsSummary } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -367,8 +367,23 @@ describe("failed units", () => {
 });
 
 describe("a companion out of date", () => {
-  it("needs a look", () => {
-    expect(attention({ status: "ok", companion_stale: true, report: {} })).toEqual([["failing", "companion out of date"]]);
+  it("is not a host problem: Settings lists it", () => {
+    expect(attention({ status: "ok", companion_stale: true, report: {} })).toEqual([]);
+  });
+});
+
+describe("companionsSummary", () => {
+  const row = (name, current, version = "1.4.1", why = "") => ({ name, current, version, why, reinstall: false });
+  it("says all are up to date, on one version", () => {
+    expect(companionsSummary([row("a", true), row("b", true)])).toEqual({ ok: true, behind: [], line: "All 2 up to date, on 1.4.1." });
+  });
+  it("lists only the ones behind", () => {
+    const s = companionsSummary([row("a", true), row("b", false, "1.4.0", "updating itself")]);
+    expect(s.line).toBe("1 of 2 up to date. Each updates itself a few minutes after Argus does.");
+    expect(s.behind.map((r) => r.name)).toEqual(["b"]);
+  });
+  it("gives no verdict on a development build", () => {
+    expect(companionsSummary([row("a", null), row("b", null, "1.4.0")]).line).toBe("2 companions, on 1.4.1, 1.4.0.");
   });
 });
 
