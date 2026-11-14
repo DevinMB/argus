@@ -1071,3 +1071,4 @@ a.tag-link:hover { filter: brightness(1.25); text-decoration: underline; }
   .pick-rows li { grid-template-columns: auto minmax(0, 1fr); }
   .pick-rows .row-note { grid-column: 2; justify-content: flex-start; }
 }
+.last-seen { margin: 12px 0 4px; padding: 10px 14px; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--muted); }

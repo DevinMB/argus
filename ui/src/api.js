@@ -73,9 +73,13 @@ export function useArgus() {
     };
     loader.current = load;
     load();
+    // A phone wakes the tab with old data and late timers: refresh at once.
+    const wake = () => { if (document.visibilityState === "visible") { ctrl?.abort(); load(); } };
+    document.addEventListener("visibilitychange", wake);
     return () => {
       clearTimeout(timer.current);
       ctrl?.abort();
+      document.removeEventListener("visibilitychange", wake);
     };
   }, []);
 

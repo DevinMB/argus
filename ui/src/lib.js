@@ -527,6 +527,20 @@ export function hostStatus(host) {
   return host.refused ? ["down", "report refused"] : HOST_STATUS[host.status];
 }
 
+// Whether what a host's page shows is only its last report: it went quiet, or
+// Argus refuses what it sends now. Its containers and guests may have stopped
+// since, so they are shown as last seen, never as running now.
+export function lastSeenOnly(host) {
+  return host.status === "quiet" || Boolean(host.refused);
+}
+
+// A guest's dot on its server's page: its own companion's state when it has one
+// (a guest can be down while its server's last report says running).
+export function guestTone(server, guestHost) {
+  if (guestHost) return guestHost.status === "ok" && !guestHost.refused ? hostTone(guestHost) : hostStatus(guestHost)[0];
+  return lastSeenOnly(server) ? "unknown" : "hollow";
+}
+
 // Which of the host's tabs shows what a "needs a look" tag is about.
 export function attentionTab(text) {
   if (/container/.test(text)) return "containers";
