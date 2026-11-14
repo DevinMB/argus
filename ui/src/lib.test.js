@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss, hostStatus, hostTone, updatesWaiting, pickedByDefault , companionsSummary } from "./lib.js";
+import { acrossSites, attention, backupLabel, failedUnits, guestsNet, installHelp, guestHostName, hostSub, hostTree, patchLabel, bytes, diskTone, hostSentence, sortContainers, errorText, pagingSentence, watcherSentence, jobLine, took, ago, agoText, filterChecks, groupChecks, headline, isPublic, joinList, ringOrder, safeHref, siteName, siteNote, summarize, jobResult, lifecycle, lifecycleHeadline, nextRun, recentMerges, scheduleDay, tidyTitle, httpText, endpoint, duplicates, placeOf, machineOf, advisoryUrl, cvss, hostStatus, hostTone, updatesWaiting, pickedByDefault , companionsSummary, lastSeenOnly, guestTone } from "./lib.js";
 
 const c = (name, status, extra = {}) => ({
   name, status, site: "B", group: "apps", target: `http://${name}/`, ...extra,
@@ -369,6 +369,21 @@ describe("failed units", () => {
 describe("a companion out of date", () => {
   it("is not a host problem: Settings lists it", () => {
     expect(attention({ status: "ok", companion_stale: true, report: {} })).toEqual([]);
+  });
+});
+
+describe("a quiet host's page", () => {
+  it("shows only its last report", () => {
+    expect(lastSeenOnly({ status: "quiet" })).toBe(true);
+    expect(lastSeenOnly({ status: "ok", refused: { why: "x" } })).toBe(true);
+    expect(lastSeenOnly({ status: "ok" })).toBe(false);
+  });
+  it("colours a guest by its own companion, not the server's last report", () => {
+    const server = { status: "quiet", report: {} };
+    expect(guestTone(server, { status: "quiet", report: {} })).toBe("down");
+    expect(guestTone({ status: "ok", report: {} }, { status: "ok", report: {} })).toBe("up");
+    expect(guestTone(server, null)).toBe("unknown");
+    expect(guestTone({ status: "ok", report: {} }, null)).toBe("hollow");
   });
 });
 

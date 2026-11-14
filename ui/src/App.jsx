@@ -122,7 +122,11 @@ export default function App() {
   // A paused check alerts nobody, so it is not among them.
   const critical = checks.filter((c) => c.severity === "critical" && c.status !== "paused");
   const pausedCritical = checks.filter((c) => c.severity === "critical" && c.status === "paused").length;
-  const stalled = data && now - data.info.last_tick > 30;
+  // Argus's own clock decides whether its checks stalled; a page that could not
+  // refresh (a phone waking a sleeping tab) says that instead, not "stalled".
+  const stalled = data && data.info.now - data.info.last_tick > 30;
+  const behindBy = fetchedAt ? (Date.now() - fetchedAt) / 1000 : 0;
+  const notUpdated = data && !error && behindBy > 90;
   const needYou = (data?.updates?.repos ?? []).filter((r) => lifecycle(r).you).length;
   const alertsUnset = data?.info.alerts && !data.info.alerts.ready;
   const quietHosts = (data?.companions?.companions ?? []).filter((h) => h.status === "quiet").length;
@@ -197,6 +201,7 @@ export default function App() {
         </nav>
         <div className="top-meta">
           {(error || stalled) && <span className="top-warn">{error ? "Cannot reach Argus" : "Checks have stalled"}</span>}
+          {notUpdated && !stalled && <span className="top-warn">Not updated for {agoText(behindBy).replace(/ ago$/, "")}</span>}
           {fetchedAt && !error && <span className="hide-sm">Updated {agoText((Date.now() - fetchedAt) / 1000)}</span>}
           {data && (
             <a className="top-version hide-sm" href="#/account" title={`Build ${data.info.commit}`}>

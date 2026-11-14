@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { send } from "../api.js";
 import Adopt from "./Adopt.jsx";
 import UrgentRule from "./UrgentRule.jsx";
-import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostStatus, hostTone, updatesWaiting, pickedByDefault, attentionTab, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
+import { advisoryUrl, agoText, attention, backupLabel, bytes, containerTrouble, cvss, diskTone, guestHostName, hostSentence, hostStatus, hostTone, lastSeenOnly, guestTone, updatesWaiting, pickedByDefault, attentionTab, hostSub, hostTree, guestsNet, installHelp, patchLabel, sortContainers } from "../lib.js";
 
 const FIRST_CONTAINERS = 8;
 const FIRST_IDS = 6; // advisory and CVE ids shown per update before "and N more"
@@ -140,6 +140,7 @@ function Containers({ list, host, session, reload }) {
   const [error, setError] = useState(null);
   const ignored = host.ignored ?? [];
   const sorted = sortContainers(list, ignored);
+  const stale = lastSeenOnly(host);
   const shown = all ? sorted : sorted.slice(0, FIRST_CONTAINERS);
   const toggle = async (name, on) => {
     try {
@@ -155,12 +156,12 @@ function Containers({ list, host, session, reload }) {
       <ul className="host-list">
         {shown.map((c) => {
           const off = ignored.includes(c.name);
-          const tone = off ? "unknown" : containerTrouble(c) ? "down" : c.health === "starting" ? "failing" : "up";
+          const tone = off || stale ? "unknown" : containerTrouble(c) ? "down" : c.health === "starting" ? "failing" : "up";
           return (
             <li key={c.name} className={off ? "muted" : undefined}>
               <span className={`dot dot-${tone}`} />
               <span className="host-item">{c.name}</span>
-              <span className={`st-${tone} host-note`}>{off ? `ignored, ${c.health || c.state}` : c.health || c.state}</span>
+              <span className={`st-${tone} host-note`}>{off ? `ignored, ${c.health || c.state}` : stale ? `was ${c.health || c.state}` : c.health || c.state}</span>
               <span className="muted host-sub mono">{c.image}
                 {(host.images_behind ?? []).includes(c.name) && <span className="tag tag-failing image-behind">newer image out</span>}</span>
               {session?.signed_in && (off || containerTrouble(c)) && (
@@ -893,8 +894,9 @@ function HostList({ hosts, session, reload }) {
 }
 
 // The Guests tab of a Proxmox server.
-function Guests({ host, hostNames, session, reload }) {
+function Guests({ host, hosts, hostNames, session, reload }) {
   const px = host.report.proxmox;
+  const stale = lastSeenOnly(host);
   const gi = useGuestInstall(host, session, reload);
   const has = (g) => hostNames.has(guestHostName(g.name || ""));
   const addable = px.guests.filter((g) => gi.canAdd(g, has(g)));
@@ -907,16 +909,17 @@ function Guests({ host, hostNames, session, reload }) {
       <ul className="rows">{px.guests.map((g) => {
         const inst = gi.installs[g.vmid];
         const argus = has(g);
+        const own = argus ? (hosts ?? []).find((h) => h.name === guestHostName(g.name || "")) : null;
         return (
           <li key={`${g.type}${g.vmid}`}>
-            <span className={`dot dot-${argus ? "up" : "hollow"}`} />
+            <span className={`dot dot-${guestTone(host, own)}`} />
             <span className="row-main">
               {argus ? <a href={`#/hosts?host=${encodeURIComponent(guestHostName(g.name))}`}>{g.name}</a> : g.name || "(no name)"}
               <span className="muted mono"> {g.type === "lxc" ? "CT" : "VM"} {g.vmid}</span>
-              <span className="row-sub muted">{g.status} · {g.backup ? `backed up ${agoText(Date.now() / 1000 - g.backup.at)} to ${g.backup.storage} (${bytes(g.backup.size)})` : "no backup this server can see"}</span>
+              <span className="row-sub muted">{stale ? `was ${g.status}` : g.status} · {g.backup ? `backed up ${agoText(Date.now() / 1000 - g.backup.at)} to ${g.backup.storage} (${bytes(g.backup.size)})` : "no backup this server can see"}</span>
             </span>
-            <span className={`row-note ${argus ? "st-up" : inst?.state === "failed" ? "st-failing" : "muted"}`}>
-              {argus ? "has Argus" : gi.skipped.has(g.vmid) ? "skipped" : inst ? INSTALL_NOTE[inst.state] : ""}</span>
+            <span className={`row-note ${argus ? (own && own.status !== "ok" ? `st-${hostStatus(own)[0]}` : "st-up") : inst?.state === "failed" ? "st-failing" : "muted"}`}>
+              {argus ? (own && own.status !== "ok" ? hostStatus(own)[1] : "has Argus") : gi.skipped.has(g.vmid) ? "skipped" : inst ? INSTALL_NOTE[inst.state] : ""}</span>
             <span className="row-act">
               {gi.canAdd(g, argus) && <button className="btn btn-small" onClick={() => gi.add([g])}>{inst?.state === "failed" ? "Try again" : "Add Argus"}</button>}
               {!argus && session?.signed_in && !host.read_only && (
@@ -1430,6 +1433,12 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
         <span className="muted small hd-seen">{host.last_seen ? `${host.refused ? "last read" : "reported"} ${agoText(host.age)}` : "waiting for its first report"}</span>
       </header>
       {host.refused && <Refused host={host} />}
+      {host.status === "quiet" && !host.refused && host.report && (
+        <p className="last-seen small" role="status">
+          Argus has not heard from {host.name} for {agoText(host.age).replace(/ ago$/, "")}. What this page shows is
+          from its last report, so containers{r.proxmox ? " and guests" : ""} shown there may have stopped since.
+        </p>
+      )}
       {host.report && <>
         <p className="muted hd-sub">{[r.os, host.address].filter(Boolean).join(" · ")}</p>
         {/* The details someone debugging wants, quieter than what the host is. */}
@@ -1451,7 +1460,7 @@ function HostDetail({ host, tab, session, reload, refs, backups, hostNames, sugg
             {r.docker_error && <p className="st-failing small">Docker: {r.docker_error}</p>}
           </Section>
         )}
-        {current === "guests" && <Guests host={host} hostNames={hostNames} session={session} reload={reload} />}
+        {current === "guests" && <Guests host={host} hosts={hosts} hostNames={hostNames} session={session} reload={reload} />}
         {current === "patching" && (
           <Section title="patching">
             <Patching host={host} session={session} refs={refs} backups={backups} reload={reload} />
