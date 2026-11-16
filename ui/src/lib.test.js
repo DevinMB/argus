@@ -266,8 +266,8 @@ describe("hosts", () => {
 
   it("tones disks like the server pages them", () => {
     expect(diskTone({ total: 100, used: 50 })).toBe("up");
-    expect(diskTone({ total: 100, used: 90 })).toBe("failing");
-    expect(diskTone({ total: 100, used: 96 })).toBe("down");
+    expect(diskTone({ total: 100, used: 85 })).toBe("failing");
+    expect(diskTone({ total: 100, used: 91 })).toBe("down");
   });
 
   it("puts troubled containers first", () => {

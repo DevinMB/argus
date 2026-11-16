@@ -67,6 +67,8 @@ type Deployer struct {
 	policyHash   string // sha256 of the policy file as last read
 	compose      func(dir string, env []string, args ...string) (string, error)
 	now          func() time.Time
+	// prune removes the images a stack moved on from (prune.go), keeping keep.
+	prune func(project string, keep map[string]bool) string
 }
 
 type deployState struct {
@@ -81,8 +83,10 @@ type deployState struct {
 }
 
 func newDeployer(stateDir string, policyPath string) *Deployer {
-	return &Deployer{StateDir: stateDir, StacksDir: filepath.Join(stateDir, "stacks"),
+	d := &Deployer{StateDir: stateDir, StacksDir: filepath.Join(stateDir, "stacks"),
 		HandedBack: "/opt/stacks", PolicyPath: policyPath, DockerSocket: "/var/run/docker.sock", compose: runCompose, now: time.Now}
+	d.prune = func(project string, keep map[string]bool) string { return pruneAfter(d.DockerSocket, project, keep) }
+	return d
 }
 
 func (d *Deployer) load() *deployState {
@@ -218,7 +222,9 @@ func (d *Deployer) one(s *deployState, st StackSpec, pull *PullCred) DeployResul
 	}
 	// The same project running from another folder: deploying here would start a
 	// second copy and leave data beside the old one. It must be linked in Argus.
+	keep := map[string]bool{} // the images it runs now: the ones to go back to
 	if cs, err := dockerContainers(d.DockerSocket); err == nil {
+		keep = imagesOf(cs, st.Name)
 		for _, c := range cs {
 			wd := filepath.Clean(c.WorkingDir)
 			// Its own old folder is fine: an uninstall moved it to dir.
@@ -296,10 +302,16 @@ func (d *Deployer) one(s *deployState, st StackSpec, pull *PullCred) DeployResul
 	}
 	err = d.upAndWait(dir, st.Name, pull, &out)
 	if err == nil {
+		var notes []string
 		if found {
-			return res("ok", "deployed in "+dir+", where the uninstall left it")
+			notes = append(notes, "deployed in "+dir+", where the uninstall left it")
 		}
-		return res("ok", "")
+		if d.prune != nil {
+			if p := d.prune(st.Name, keep); p != "" {
+				notes = append(notes, p)
+			}
+		}
+		return res("ok", strings.Join(notes, "; "))
 	}
 	why := out
 	if !hadDeploy {
@@ -327,6 +339,30 @@ func (d *Deployer) one(s *deployState, st StackSpec, pull *PullCred) DeployResul
 		return res("failed", why+"\nrolling back failed too: "+back)
 	}
 	return res("rolled_back", why)
+}
+
+// PruneAll removes the old images of every stack this companion deploys, once,
+// when it starts: hosts that deployed for weeks before deploys cleaned up after
+// themselves (decision 24) are cleared on the companion's first start with it,
+// not only at each stack's next deploy. It runs before any deploy, never beside
+// one, so an image a deploy just pulled is never taken.
+func (d *Deployer) PruneAll() []string {
+	if d.prune == nil {
+		return nil
+	}
+	s := d.load()
+	names := make([]string, 0, len(s.Managed))
+	for name := range s.Managed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []string
+	for _, name := range names {
+		if p := d.prune(name, nil); p != "" {
+			out = append(out, name+": "+p)
+		}
+	}
+	return out
 }
 
 // handedBackMark is the file an uninstall leaves in each stack folder it hands

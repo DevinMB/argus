@@ -1786,7 +1786,7 @@ export default function Hosts({ data, session, reload, start, refs = [] }) {
           <h1>Hosts</h1>
           <p className="lede muted">
             {hosts.length === 0 ? "No hosts yet. Add one to see its containers, disks and updates here."
-              : `${hosts.length} host${hosts.length === 1 ? "" : "s"}${quiet ? `, ${quiet} gone quiet` : ""}. A host that misses three reports, or a disk past 95%, alerts you.`}
+              : `${hosts.length} host${hosts.length === 1 ? "" : "s"}${quiet ? `, ${quiet} gone quiet` : ""}. A host that misses three reports, or a disk past 90%, alerts you.`}
           </p>
         </div>
         {!adding && (session?.signed_in
