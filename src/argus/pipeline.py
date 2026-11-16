@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
-VERSION = 1
+VERSION = 2
 MARK = "# Made by Argus (pipeline "  # the first line; Argus offers updates while it stays
 LABEL = "waits-for-you"
 SKIP_DIRS = {"node_modules", "vendor", "test", "tests", "examples", "example", ".devcontainer",
@@ -306,7 +306,18 @@ jobs:
           UPDATE: ${{{{ steps.meta.outputs.update-type }}}}
         run: |
           set -eu
-          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --merge --delete-branch
+          # Merge with whichever method the repository allows, and retry while GitHub
+          # settles (another update merged a moment ago, or mergeability is still being
+          # worked out). A conflict fails here; Dependabot then rebases and CI runs again.
+          merged=
+          for try in 1 2 3 4 5 6; do
+            for how in squash merge rebase; do
+              if out=$(gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --$how --delete-branch 2>&1); then merged=$how; break 2; fi
+              case $out in *"not allowed"*) ;; *) break ;; esac
+            done
+            echo "Merge attempt $try: $out"; sleep 20
+          done
+          [ -n "$merged" ] || {{ echo "::error::Could not merge #$PR: $out"; exit 1; }}
           gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref {_q(default)}
           echo "### Merged #$PR ($UPDATE) and started the {default} build" >> "$GITHUB_STEP_SUMMARY"
 
