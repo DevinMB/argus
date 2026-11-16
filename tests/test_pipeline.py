@@ -48,7 +48,7 @@ def test_a_fresh_repo_gets_one_job_per_dockerfile_and_a_weekly_cache():
         ("backend", "ghcr.io/ann/shop-backend", "backend", True),
         ("frontend", "ghcr.io/ann/shop-frontend", "frontend", False)]
     ci = p.files[".github/workflows/ci.yml"]
-    assert ci.startswith(pipeline.MARK + "1)")
+    assert ci.startswith(pipeline.MARK + f"{pipeline.VERSION})")
     doc = yaml.safe_load(ci)
     assert set(doc["jobs"]) == {"backend", "frontend", "gate"}
     assert doc["jobs"]["gate"]["needs"] == ["backend", "frontend"]
@@ -247,3 +247,15 @@ async def test_the_app_asks_for_write_only_for_one_repo_and_says_when_it_may_not
         await creds.write_token("ann", "shop")
     assert await creds.write_token("ann", "shop") == "ghs_one_repo"
     assert asked[-1] == {"repositories": ["shop"], "permissions": ghauth.PIPELINE_WRITE}
+
+
+def test_the_gate_merges_whatever_way_the_repo_allows_and_retries_a_moving_main():
+    """A squash-only repo refuses --merge, and two updates passing together race
+    for main; the gate's merge step has to survive both."""
+    p = pipeline.plan("ann", "shop", "main", PATHS, TEXTS, None, False)
+    doc = yaml.safe_load(p.files[".github/workflows/ci.yml"])
+    step = next(s for s in doc["jobs"]["gate"]["steps"] if s.get("name", "").startswith("Merge"))
+    run = step["run"]
+    assert "for how in squash merge rebase" in run and "not allowed" in run
+    assert "for try in 1 2 3 4 5 6" in run and 'exit 1' in run
+    assert "--merge --delete-branch" not in run
