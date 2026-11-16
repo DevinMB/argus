@@ -138,6 +138,9 @@ func run(ctx context.Context, c *Config, deployer *Deployer, stateDir string) {
 			}
 		}
 	}()
+	for _, line := range deployer.PruneAll() { // before the first deploy, never beside one
+		log.Info("old images removed", "stack", line)
+	}
 	go patcher.AfterBoot() // a run that asked for a reboot finishes now
 	go checker.Loop(ctx)
 	every, failing := 60*time.Second, false

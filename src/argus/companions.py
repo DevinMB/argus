@@ -40,7 +40,7 @@ SEVERAL_TTL = 60 * 60  # a code for several hosts: time to go round them
 MAX_USES = 50
 REPORT_EVERY = 60  # seconds, told to each companion in every reply
 QUIET_AFTER = 3 * REPORT_EVERY  # three missed reports
-DISK_FULL = 0.95  # used share that pages
+DISK_FULL = 0.90  # used share that pages: room left for one more large image pull
 DISK_WARN = 0.85  # used share the UI marks
 SIGNING_KEY = "companions.signing_key"
 # What a signature covers: this prefix, the companion's id, its nonce, the body.

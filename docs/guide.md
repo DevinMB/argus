@@ -24,7 +24,7 @@ Everything Argus watches is one YAML file, `argus.yml`. Most people never open i
 - **Argus, on Telegram.** Paste a bot token from @BotFather, send your bot a message, and Argus finds the chat. **Send a test** proves it works.
 - **Prometheus and Alertmanager**, if you already run them. Argus serves `/metrics` and the rules to copy. It keeps sending its own alerts until Alertmanager's test arrives, so the switch leaves no gap.
 
-**What alerts you** sets the rules: a check set to Alert goes down or comes back, a host stops reporting or a disk passes 95%, a job fails or is late, a patch run fails, a security fix is waiting.
+**What alerts you** sets the rules: a check set to Alert goes down or comes back, a host stops reporting or a disk passes 90%, a job fails or is late, a patch run fails, a security fix is waiting.
 
 **Who watches Argus.** A stopped Argus cannot tell you it stopped. On any host, run `sudo /usr/local/bin/argus-companion watch` and give it a second Telegram bot (not the one Argus uses). That host then messages you if Argus stops answering for 5 minutes. The token stays on that host.
 
@@ -32,7 +32,7 @@ Everything Argus watches is one YAML file, `argus.yml`. Most people never open i
 
 On **Hosts**, press **Add a host** and run the command it shows on the host. Within a minute the host shows its containers, disks, failed services, pending updates and whether it needs a reboot. One command can add several hosts; each takes its own name.
 
-- A host that misses three reports, or a disk past 95%, alerts you.
+- A host that misses three reports, or a disk past 90%, alerts you.
 - Each tag under **Needs a look** links to its cause.
 - **Ignore** a container you do not care about (a one-off that exited). It moves to the bottom and no longer counts as trouble.
 - **Newer image out** on the Containers tab means the registry now serves a newer image under the tag a running container uses (`postgres:16`, `:latest`). Pull it in the stack's folder, or let its next deploy do it. A tag naming one exact version never moves; for those, let Dependabot propose the next version.
@@ -87,7 +87,7 @@ On **Updates**, press **Connect GitHub**. Argus makes its own read-only GitHub A
 3. **Move your stacks in.** Every Compose project running on your hosts is listed. **Move into git** commits each compose file, keeps its `.env` secrets in Argus, and leaves the containers running where they are.
 4. **Turn on Dependabot,** so a newer image arrives as a pull request. Merging it deploys it.
 
-From then on, each host deploys its stacks when they change in git: pull, start, wait until healthy, and go back to the previous version if it is not.
+From then on, each host deploys its stacks when they change in git: pull, start, wait until healthy, and go back to the previous version if it is not. After a healthy deploy, the host removes that stack's older images that nothing uses, keeping the previous one for going back, so old builds do not fill the disk.
 
 - **Your own apps:** when an app's main build passes, Argus updates its image tag in the deploy repo, and the host deploys it.
 - **Secrets** are set on the Hosts page and written only to the `.env` on the host that runs the stack.

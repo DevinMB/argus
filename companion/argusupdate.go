@@ -37,6 +37,7 @@ const argusWait = 180 // seconds for the new Argus to report healthy
 type ArgusUpdater struct {
 	StateDir string
 	docker   func(dir string, env []string, args ...string) (string, error)
+	prune    func(project string, keep map[string]bool) string // prune.go
 	mu       sync.Mutex
 	result   *ArgusUpdateResult
 	done     map[string]bool
@@ -47,6 +48,9 @@ func newArgusUpdater(stateDir string) *ArgusUpdater {
 	return &ArgusUpdater{StateDir: stateDir, done: map[string]bool{},
 		docker: func(dir string, env []string, args ...string) (string, error) {
 			return runIn(dir, env, 15*time.Minute, "docker", args...)
+		},
+		prune: func(project string, keep map[string]bool) string {
+			return pruneAfter("/var/run/docker.sock", project, keep)
 		}}
 }
 
@@ -150,6 +154,12 @@ func (a *ArgusUpdater) update(u ArgusUpdate, c Container) *ArgusUpdateResult {
 	up := append(base[:len(base):len(base)], "up", "-d", "--wait", "--wait-timeout", fmt.Sprint(argusWait))
 	if _, err := run(up...); err == nil {
 		res.State, res.Summary = "ok", "updated; Argus is up and healthy"
+		// The release before stays for going back; older ones go (decision 24).
+		if a.prune != nil {
+			if p := a.prune(u.Project, map[string]bool{old: true}); p != "" {
+				res.Summary += "; " + p
+			}
+		}
 		return res
 	}
 	// Not healthy: the old image back under the same tag, and the old Argus again.

@@ -415,8 +415,8 @@ export function bytes(n) {
   return i === 0 ? `${n} B` : `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
 }
 
-export const DISK_WARN = 0.85;
-export const DISK_FULL = 0.95; // pages, as on the server
+export const DISK_WARN = 0.80;
+export const DISK_FULL = 0.90; // pages, as on the server
 
 export function diskTone(d) {
   const r = d.total ? d.used / d.total : 0;

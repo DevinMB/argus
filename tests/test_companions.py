@@ -178,8 +178,9 @@ def test_a_read_only_install_is_told_so(client, csrf):
 
 def test_quiet_hosts_and_full_disks_page(client, csrf, rt, clock, tmp_path):
     me = enroll(client, new_code(client, csrf)["code"]).json()
-    report(client, me["token"], disks=[{"mount": "/", "total": 1000, "used": 960},
-                                       {"mount": "/srv", "total": 1000, "used": 500}])
+    # 91%: deals-lab's disk filled from here in a day (RCA 2026-11-16), so it pages.
+    report(client, me["token"], disks=[{"mount": "/", "total": 1000, "used": 910},
+                                       {"mount": "/srv", "total": 1000, "used": 890}])
     settings = Settings(rt.store.db, load_key(tmp_path / "argus.key"))
     alerter = Alerter(rt, settings, httpx.AsyncClient())
     assert {k: p.title for k, p in alerter.problems().items()} == {
@@ -188,7 +189,7 @@ def test_quiet_hosts_and_full_disks_page(client, csrf, rt, clock, tmp_path):
     assert list(alerter.problems()) == ["companion:nas"]
     reg = registry(rt)
     assert reg.get_sample_value("argus_companion_disk_used_ratio",
-                                {"companion": "nas", "mount": "/"}) == 0.96
+                                {"companion": "nas", "mount": "/"}) == 0.91
     assert reg.get_sample_value("argus_companion_last_report_timestamp_seconds",
                                 {"companion": "nas"}) is not None
 
