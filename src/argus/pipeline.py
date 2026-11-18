@@ -16,6 +16,13 @@ Each image's build cache is scoped to it and to the ISO week, so an OS upgrade
 step in a Dockerfile really runs at least weekly (found 2026-11-09: a shared,
 never-expiring cache kept bouy-lab's apt-get upgrade layer stale, and Trivy
 failed every Dependabot PR on fixed Debian packages).
+
+Version 3 (Argus's first security review, 2026-11-18): each job holds only the
+token it needs, so the jobs that build and run a pull request's code cannot
+merge, push to a branch or start workflows; checkout leaves no token in .git
+for a build to read; and Dependabot waits a week before offering a new
+release, the time a hijacked package usually takes to be found and pulled.
+Security updates are not held back.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
-VERSION = 2
+VERSION = 3
 MARK = "# Made by Argus (pipeline "  # the first line; Argus offers updates while it stays
 LABEL = "waits-for-you"
 SKIP_DIRS = {"node_modules", "vendor", "test", "tests", "examples", "example", ".devcontainer",
@@ -149,6 +156,40 @@ def carry_over(ci: str) -> list[Image]:
     return [i for i in out if i.image]
 
 
+def carry_over_argus(ci: str) -> list[Image]:
+    """The images an Argus-made ci.yml builds, with what the owner set in it (image
+    names, test commands, smoke settings, build args, the branch that publishes),
+    so a newer pipeline version keeps them."""
+    try:
+        doc = yaml.safe_load(ci) or {}
+    except yaml.YAMLError:
+        return []
+    out = []
+    for job, spec in (doc.get("jobs") or {}).items():
+        if job == "gate" or not isinstance(spec, dict):
+            continue
+        steps = [st for st in spec.get("steps") or [] if isinstance(st, dict)]
+        named = {str(st.get("name", "")).split(" ")[0]: st for st in steps}
+        build = (named.get("Build") or {}).get("with") or {}
+        image = str((spec.get("env") or {}).get("IMAGE", ""))
+        if not image or not build:
+            continue
+        ctx = str(build.get("context", "."))
+        args = [a for a in str(build.get("build-args", "")).splitlines()
+                if a.strip() and not a.strip().startswith("COMMIT=")]
+        push = re.search(r"refs/heads/([^']+)'", str((named.get("Push") or {}).get("if", "")))
+        smoke = named.get("Smoke")
+        out.append(Image(
+            job=_slug(str(job)), image=image, context=ctx,
+            dockerfile=posixpath.relpath(str(build.get("file", "Dockerfile")), ctx),
+            test_command=str(((named.get("Tests") or {}).get("env") or {}).get("TEST_COMMAND", "")),
+            smoke=smoke is not None,
+            smoke_env=str(((smoke or {}).get("env") or {}).get("SMOKE_ENV", "")),
+            build_args="\n".join(a.strip() for a in args),
+            branch=push.group(1) if push else ""))
+    return out
+
+
 def _q(s: str) -> str:
     """A YAML scalar that means exactly s (JSON strings are valid YAML)."""
     return json.dumps(s)
@@ -159,10 +200,15 @@ def _job(i: Image, default: str) -> str:
     lines = [
         f"  {i.job}:",
         "    runs-on: ubuntu-24.04",
+        "    permissions:",
+        "      contents: read",
+        f"      packages: write   # push to GHCR from {branch}",
         "    env:",
         f"      IMAGE: {_q(i.image)}",
         "    steps:",
         f"      - uses: {CHECKOUT}",
+        "        with:",
+        "          persist-credentials: false  # no token in .git for the build to find",
         "",
         "      # Runners have about 14 GB free; toolchains this never uses take 20 GB more.",
         "      - name: Free disk space",
@@ -275,11 +321,10 @@ on:
     branches: [{", ".join(branches)}]
   workflow_dispatch:
 
+# Each job asks for what it needs: the jobs that build a pull request's code
+# can push images only, and only the gate, which runs none of it, can merge.
 permissions:
-  contents: write       # the gate merges Dependabot PRs
-  pull-requests: write  # ...and labels majors
-  packages: write       # push to GHCR
-  actions: write        # the gate starts the {default} build after merging
+  contents: read
 
 jobs:
 """
@@ -292,6 +337,10 @@ jobs:
     needs: [{needs}]
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write       # merge Dependabot PRs
+      pull-requests: write  # ...and label majors
+      actions: write        # start the {default} build after merging
     steps:
       - id: meta
         uses: {METADATA}
@@ -334,6 +383,9 @@ jobs:
     return head + jobs + gate
 
 
+COOLDOWN = ["    cooldown:", "      default-days: 7"]
+
+
 def render_dependabot(images: list[Image], paths: list[str]) -> str:
     """Weekly updates for each image's base, the app's packages and the actions."""
     found: dict[str, set[str]] = {"docker": set(), "pip": set(), "npm": set(), "gomod": set()}
@@ -347,18 +399,21 @@ def render_dependabot(images: list[Image], paths: list[str]) -> str:
         if parts[-1] in manifests and not SKIP_DIRS & set(parts[:-1]):
             found[manifests[parts[-1]]].add("/" + "/".join(parts[:-1]))
     lines = [f"{MARK}{VERSION}): weekly updates; the pipeline merges patch and minor.",
+             "# A new release waits 7 days first, the time a hijacked package usually takes",
+             "# to be found and pulled. Security updates do not wait.",
              "version: 2", "updates:"]
     for eco in ("docker", "pip", "npm", "gomod"):
         for d in sorted(found[eco]):
             lines += [f"  - package-ecosystem: {eco}", f"    directory: {_q(d.rstrip('/') or '/')}",
-                      "    schedule:", "      interval: weekly"]
+                      "    schedule:", "      interval: weekly", *COOLDOWN]
     lines += ["  - package-ecosystem: github-actions", "    directory: \"/\"",
-              "    schedule:", "      interval: weekly"]
+              "    schedule:", "      interval: weekly", *COOLDOWN]
     return "\n".join(lines) + "\n"
 
 
 def plan(owner: str, repo: str, default: str, paths: list[str], texts: dict[str, str],
-         ci: str | None, has_dependabot: bool, edits: list[dict] | None = None) -> Plan:
+         ci: str | None, has_dependabot: bool, edits: list[dict] | None = None,
+         dependabot: str | None = None) -> Plan:
     """What the pull request adds for this repo, as the owner would review it."""
     kind = kind_of(ci)
     p = Plan(kind=kind)
@@ -366,7 +421,8 @@ def plan(owner: str, repo: str, default: str, paths: list[str], texts: dict[str,
         p.blocked = ("This repo has its own .github/workflows/ci.yml. Argus does not replace "
                      "a workflow it did not write: rename yours to keep both, or delete it.")
         return p
-    images = carry_over(ci or "") if kind == "shared" else []
+    images = (carry_over(ci or "") if kind == "shared"
+              else carry_over_argus(ci or "") if kind == "argus" else [])
     if not images:
         images = detect(owner, repo, paths, texts)
     if not images:
@@ -384,23 +440,41 @@ def plan(owner: str, repo: str, default: str, paths: list[str], texts: dict[str,
         if not i.smoke:
             p.notes.append(f"{i.image} has no HEALTHCHECK, so it is not started in CI. "
                            "Add one to its Dockerfile to check it starts.")
+    for i in images:
+        if i.branch == default:
+            i.branch = ""
     p.files[".github/workflows/ci.yml"] = render_ci(images, default)
-    if not has_dependabot:
+    if not has_dependabot or (dependabot or "").startswith(MARK):
         p.files[".github/dependabot.yml"] = render_dependabot(images, paths)
     else:
-        p.notes.append("Its .github/dependabot.yml stays as it is.")
+        p.notes.append("Its .github/dependabot.yml stays as it is. Consider adding "
+                       "\"cooldown: {default-days: 7}\" to each entry, so a new release "
+                       "waits a week before it is offered.")
+    if kind == "argus":
+        p.notes.append(f"This updates the pipeline Argus wrote here (version "
+                       f"{version_of(ci) or 1}) to version {VERSION}, keeping its image names, "
+                       "test commands and settings. Edits made to it by hand are replaced: "
+                       "the pull request shows each change.")
     return p
 
 
 PR_TITLE = "Add Argus's CI pipeline"
+UPDATE_TITLE = "Update Argus's CI pipeline to version {}"
+
+
+def pr_title(p: Plan) -> str:
+    return UPDATE_TITLE.format(VERSION) if p.kind == "argus" else PR_TITLE
 
 
 def pr_body(p: Plan) -> str:
     names = "\n".join(f"- `{i.image}` from `{posixpath.join(i.context, i.dockerfile)}`"
                       for i in p.images)
     notes = "\n".join(f"- {n}" for n in p.notes)
+    update = ("" if p.kind != "argus" else f"""
+**New in version {VERSION}:** each job holds only the token it needs, so the jobs that build a pull request's code cannot merge or push to a branch; checkout leaves no token in `.git`; and Dependabot waits 7 days before offering a new release (security updates do not wait).
+""")
     return f"""Argus opened this from its Updates page.
-
+{update}
 **What it adds:** `.github/workflows/ci.yml`{" and `.github/dependabot.yml`" if ".github/dependabot.yml" in p.files else ""}. On every pull request each image is built, tested inside the image, started (when it has a HEALTHCHECK) and scanned with Trivy. Dependabot's patch and minor updates then merge on their own; majors get the `{LABEL}` label and wait for you. On the default branch each image goes to GHCR as `sha-<7 chars>`.
 
 **Images:**
@@ -455,12 +529,17 @@ async def read_repo(client, token: str, owner: str, repo: str, branch: str) -> d
     if ".github/workflows/ci.yml" in paths:
         ci = (await _call(client, "GET", f"{base}/contents/.github/workflows/ci.yml?ref={branch}",
                           token, raw=True)).text
-    has_dependabot = any(p in paths for p in (".github/dependabot.yml", ".github/dependabot.yaml"))
-    return {"paths": paths, "texts": texts, "ci": ci, "has_dependabot": has_dependabot}
+    found = [p for p in (".github/dependabot.yml", ".github/dependabot.yaml") if p in paths]
+    dependabot = None
+    if found:
+        dependabot = (await _call(client, "GET", f"{base}/contents/{found[0]}?ref={branch}",
+                                  token, raw=True)).text
+    return {"paths": paths, "texts": texts, "ci": ci, "has_dependabot": bool(found),
+            "dependabot": dependabot}
 
 
 async def open_pr(client, token: str, owner: str, repo: str, base_branch: str,
-                  files: dict[str, str], body: str) -> str:
+                  files: dict[str, str], body: str, title: str = PR_TITLE) -> str:
     """Put the files on argus/pipeline (made fresh from the default branch) and open,
     or reuse, the pull request. Returns its URL. Argus never merges it."""
 
@@ -475,7 +554,7 @@ async def open_pr(client, token: str, owner: str, repo: str, base_branch: str,
     for path, text in files.items():
         old = await _call(client, "GET", f"{base}/contents/{path}?ref={BRANCH}", token,
                           ok=(200, 404))
-        put = {"message": f"{PR_TITLE}: {path}", "branch": BRANCH,
+        put = {"message": f"{title}: {path}", "branch": BRANCH,
                "content": base64.b64encode(text.encode()).decode()}
         if old.status_code == 200:
             put["sha"] = old.json()["sha"]
@@ -485,5 +564,5 @@ async def open_pr(client, token: str, owner: str, repo: str, base_branch: str,
     if prs:
         return prs[0]["html_url"]
     pr = await _call(client, "POST", f"{base}/pulls", token,
-                     json={"title": PR_TITLE, "head": BRANCH, "base": base_branch, "body": body})
+                     json={"title": title, "head": BRANCH, "base": base_branch, "body": body})
     return pr.json()["html_url"]

@@ -287,6 +287,7 @@ class Poller:
             f = await self._get(f"{base}/contents/.github/workflows/ci.yml", ref=t.branch)
             text = base64.b64decode((f or {}).get("content", "")).decode(errors="replace")
             pipe = {"kind": pipeline.kind_of(text), "version": pipeline.version_of(text)}
+        pipe["latest"] = pipeline.VERSION
         now = self.clock()
         merged = [p for p in closed if p["merged_at"] and now - ts(p["merged_at"]) < MERGED_WINDOW]
         for p in merged:

@@ -113,6 +113,56 @@ def test_the_kind_of_a_ci_file():
     assert pipeline.kind_of(made) == "argus" and pipeline.version_of(made) == pipeline.VERSION
 
 
+def test_each_job_holds_only_the_token_it_needs():
+    # Version 3 (security review, 2026-11-18): the jobs that build a pull request's
+    # code can push images and nothing else; only the gate, which runs none of it,
+    # can merge; checkout leaves no token in .git for a build to read.
+    p = pipeline.plan("ann", "shop", "main", PATHS, TEXTS, None, False)
+    doc = yaml.safe_load(p.files[".github/workflows/ci.yml"])
+    assert doc["permissions"] == {"contents": "read"}
+    for job in ("backend", "frontend"):
+        assert doc["jobs"][job]["permissions"] == {"contents": "read", "packages": "write"}
+        checkout = doc["jobs"][job]["steps"][0]
+        assert checkout["uses"].startswith("actions/checkout@")
+        assert checkout["with"] == {"persist-credentials": False}
+    assert doc["jobs"]["gate"]["permissions"] == {
+        "contents": "write", "pull-requests": "write", "actions": "write"}
+    dep = yaml.safe_load(p.files[".github/dependabot.yml"])
+    assert all(u["cooldown"] == {"default-days": 7} for u in dep["updates"])
+
+
+def test_a_pipeline_argus_wrote_updates_in_place_and_keeps_its_settings():
+    edits = [{"job": "backend", "image": "ghcr.io/ann/api", "test_command": "pytest -q"}]
+    first = pipeline.plan("ann", "shop", "main", PATHS, TEXTS, None, False, edits)
+    old_ci = first.files[".github/workflows/ci.yml"].replace(
+        f"{pipeline.MARK}{pipeline.VERSION})", f"{pipeline.MARK}1)", 1)
+    old_dep = first.files[".github/dependabot.yml"]
+    p = pipeline.plan("ann", "shop", "main", PATHS, TEXTS, old_ci, True, None, old_dep)
+    assert p.kind == "argus" and not p.blocked
+    got = [(i.job, i.image, i.context, i.dockerfile, i.test_command, i.smoke) for i in p.images]
+    assert got == [
+        ("backend", "ghcr.io/ann/api", "backend", "Dockerfile", "pytest -q", True),
+        ("frontend", "ghcr.io/ann/shop-frontend", "frontend", "Dockerfile", "", False)]
+    assert p.files[".github/workflows/ci.yml"] == first.files[".github/workflows/ci.yml"]
+    assert ".github/dependabot.yml" in p.files  # Argus wrote it, so it gets the cooldown
+    assert any("to version 3, keeping its image names" in n for n in p.notes)
+    assert pipeline.pr_title(p) == "Update Argus's CI pipeline to version 3"
+    assert "New in version 3" in pipeline.pr_body(p)
+    # A branch other than the default keeps publishing from that branch.
+    shared = pipeline.plan("ann", "shop", "main", PATHS, TEXTS, SHARED, True)
+    again = pipeline.plan("ann", "shop", "main", PATHS, TEXTS,
+                          shared.files[".github/workflows/ci.yml"], True)
+    assert [(i.job, i.branch) for i in again.images] == [("backend", ""), ("web", "beta")]
+
+
+def test_a_dependabot_file_argus_did_not_write_stays_with_a_suggestion():
+    p = pipeline.plan("ann", "shop", "main", PATHS, TEXTS, None, True, None,
+                      "version: 2\nupdates: []\n")
+    assert ".github/dependabot.yml" not in p.files
+    assert any("cooldown: {default-days: 7}" in n for n in p.notes)
+    assert pipeline.pr_title(p) == pipeline.PR_TITLE
+
+
 # --- the endpoints, against a small GitHub ---
 
 class Repo:
