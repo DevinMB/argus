@@ -245,13 +245,14 @@ func (d *Deployer) one(s *deployState, st StackSpec, pull *PullCred) DeployResul
 	if err := writeFiles(stage, files, st.Env); err != nil {
 		return res("failed", err.Error())
 	}
-	out, err := d.compose(stage, nil, "-p", st.Name, "config", "--format", "json")
-	if err != nil {
-		return res("failed", "docker compose config: "+out)
+	bad, failed := d.judge(d.Policy, stage, st.Name, dir)
+	if failed != "" {
+		return res("failed", failed)
 	}
-	if bad := d.Policy.Check([]byte(out), stage, dir); len(bad) > 0 {
+	if len(bad) > 0 {
 		return res("refused", "this host's policy refuses it: "+strings.Join(bad, "; "))
 	}
+	var out string
 
 	// 2. Write the files, keeping the old ones to roll back to.
 	backup := filepath.Join(d.StateDir, "backup", st.Name)
@@ -393,6 +394,25 @@ func (d *Deployer) home(s *deployState, name string) (dir string, found bool) {
 		return dir, true
 	}
 	return "", false
+}
+
+// judge runs the host's policy on a staged stack: first the host files Compose
+// would read into it (env_file, label_file), so a forbidden one is never read,
+// then the stack as Compose resolves it. failed is set when Compose cannot
+// resolve the files at all.
+func (d *Deployer) judge(p *Policy, stage, project, dir string) (bad []string, failed string) {
+	raw, err := d.compose(stage, nil, "-p", project, "config", "--format", "json", "--no-interpolate")
+	if err != nil {
+		return nil, "docker compose config: " + raw
+	}
+	if bad = p.CheckFiles([]byte(raw), stage); len(bad) > 0 {
+		return bad, ""
+	}
+	out, err := d.compose(stage, nil, "-p", project, "config", "--format", "json")
+	if err != nil {
+		return nil, "docker compose config: " + out
+	}
+	return p.Check([]byte(out), stage, dir), ""
 }
 
 // allowed: dir is inside a folder this host's policy lets stacks live in.
