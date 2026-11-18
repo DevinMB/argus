@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }  # no token left in .git for the code under test
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.14" }
       - run: pip install -r requirements-dev.txt
@@ -24,10 +25,10 @@ jobs:
     needs: test
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
-      packages: write   # push to GHCR on main
+      contents: read    # pushing is the publish job's, below
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }  # no token left in .git for the code under test
       - name: Build
         env:
           COMMIT: ${{ github.sha }}
@@ -226,25 +227,35 @@ jobs:
           jq -e '.companions[] | select(.name == "alpine") | .status == "ok" and .report.updates.manager == "apk"' hosts.json \
             || { docker exec alpine rc-service argus-companion status; jq '.companions' hosts.json; exit 1; }
           docker exec alpine rc-service argus-companion status
-      # Only in the published repo (forks build but do not push), and only what
-      # passed every step above. main: sha-<7> and :edge. A release: 1.2.3, 1.2
-      # and 1, which is what people run, plus sha-<7>.
+
+  # Pushing is a job of its own, so no step that runs the code under test holds
+  # a token that can push: the smoke test above installs this build's companion
+  # as root on the runner, and a pull request's build is a Dependabot update's
+  # too. Only in the published repo (forks build but do not push), only after
+  # every check passed, rebuilt from the same files.
+  publish:
+    needs: image
+    if: >-
+      github.repository == 'DevinMB/argus'
+      && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write   # push to GHCR
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: Version
+        run: |
+          # A release tag (v1.2.3) names the version; every other build is "dev".
+          version=dev
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version=${GITHUB_REF_NAME#v}; fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Set up QEMU and Buildx, for the arm64 image
-        if: >-
-          github.repository == 'DevinMB/argus'
-          && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - if: >-
-          github.repository == 'DevinMB/argus'
-          && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Push to GHCR
-        if: >-
-          github.repository == 'DevinMB/argus'
-          && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ghcr.io/devinmb/argus
@@ -269,7 +280,7 @@ jobs:
   # A release's notes, from the pull requests merged since the last one. Only
   # after its images are pushed, so a release never names an image that is missing.
   release:
-    needs: image
+    needs: publish
     if: >-
       github.repository == 'DevinMB/argus' && startsWith(github.ref, 'refs/tags/v')
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
