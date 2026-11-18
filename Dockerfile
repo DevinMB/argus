@@ -10,7 +10,7 @@ RUN npm test && npm run build
 
 # The companion: tested here, built for both architectures, served by Argus to
 # the hosts it enrolls. Static binaries, standard library only.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS companion
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS companion
 WORKDIR /src
 COPY companion/ ./
 ARG COMMIT=unknown

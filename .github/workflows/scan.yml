@@ -1,0 +1,69 @@
+# Security scanners (Argus's first security review, 2026-11-18). The dependency
+# checks fail on a known vulnerability in what ships; CodeQL reads the code
+# itself and files what it finds under Security, Code scanning. Weekly too, as
+# new advisories arrive without any change here.
+name: scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.14" }
+
+      - name: Python packages (pip-audit)
+        run: |
+          pip install -q pip-audit==2.10.1
+          pip-audit -r requirements.txt
+
+      # What ships in the image: the build tools (vite, vitest) never reach it.
+      - name: UI packages (npm audit)
+        working-directory: ui
+        run: npm audit --omit=dev
+
+      # The companion has no modules beyond Go's standard library, so this checks
+      # the Go release the Dockerfile builds it with, and the calls it makes.
+      - name: Companion and its Go release (govulncheck)
+        run: |
+          go=$(sed -n 's/^FROM .*golang:\([0-9.]*\)-alpine.*/\1/p' Dockerfile)
+          echo "Go $go"
+          docker run --rm -v "$PWD/companion:/src:ro" -w /src -e GOFLAGS=-buildvcs=false "golang:$go-alpine" \
+            go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  codeql:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write   # file what it finds under Code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, go]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.language == 'go' && 'autobuild' || 'none' }}
+          source-root: ${{ matrix.language == 'go' && 'companion' || '.' }}
+      - uses: github/codeql-action/autobuild@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: matrix.language == 'go'
+        with:
+          working-directory: companion
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: ${{ matrix.language }}

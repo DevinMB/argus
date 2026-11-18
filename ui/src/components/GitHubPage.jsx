@@ -261,6 +261,14 @@ export default function GitHubPage({ session }) {
               ))}
             </ul>
           )}
+          {view.installations.some((i) => i.writes?.length) && (
+            <p className="small muted">
+              The app may also write to repos ({[...new Set(view.installations.flatMap((i) => i.writes ?? []))].join(", ")}).
+              Argus uses that only to open pipeline pull requests, with a key for one repo at a time. When you are not adding
+              or updating a pipeline, you can set those back to Read-only in <Ext href={`${view.settings_url}/permissions`}>its
+              permissions</Ext>; Argus asks again when it needs them.
+            </p>
+          )}
           <div className="actions">
             <Ext href={view.install_url}>Install on another account</Ext>
             <button className="btn" onClick={() => load(true)}>Look for new repos</button>
