@@ -6,7 +6,9 @@
 - A session is a random token in an HttpOnly, SameSite=Strict cookie; only its
   hash is stored. Each session has a CSRF token that every write must echo in
   the X-CSRF-Token header.
-- Failed logins are rate-limited per address and overall.
+- Failed logins are rate-limited per address and overall. An address that has
+  signed in before is spared the overall limit, so someone guessing from
+  elsewhere on the network cannot lock the admin out.
 - Forgot the password: `python -m argus reset-login` in the container clears it
   and every session; the next page load prints a new setup code.
 """
@@ -73,6 +75,7 @@ class Auth:
         self._code: str | None = None
         self._fails: dict[str, deque[float]] = {}
         self._all_fails: deque[float] = deque()
+        self._known: dict[str, float] = {}  # address -> last good sign-in
 
     # --- first start ---
 
@@ -102,6 +105,7 @@ class Auth:
             raise AuthError(403, "wrong setup code; it is in the Argus log")
         self._set_password(password)
         self._code = None
+        self._known[address] = self.clock()
         log.info("admin password set")
         return self._new_session()
 
@@ -119,6 +123,7 @@ class Auth:
             raise AuthError(403, "wrong password") from None
         if self.hasher.check_needs_rehash(stored):
             self.settings.set(HASH_KEY, self.hasher.hash(password))
+        self._known[address] = self.clock()
         return self._new_session()
 
     def session(self, token: str | None) -> Session | None:
@@ -189,8 +194,9 @@ class Auth:
         return q
 
     def _throttle(self, address: str) -> None:
+        known = self.clock() - self._known.get(address, -1e18) < SESSION_DAYS * 86400
         if (len(self._recent(self._fails.get(address, deque()))) >= FAILS_PER_ADDRESS
-                or len(self._recent(self._all_fails)) >= FAILS_OVERALL):
+                or (not known and len(self._recent(self._all_fails)) >= FAILS_OVERALL)):
             raise AuthError(429, "too many failed attempts; try again in 15 minutes")
 
     def _failed(self, address: str) -> None:
@@ -199,3 +205,5 @@ class Auth:
         self._all_fails.append(now)
         if len(self._fails) > 10_000:  # bound memory under a scan
             self._fails.clear()
+        if len(self._known) > 1000:
+            self._known.clear()

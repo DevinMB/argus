@@ -102,6 +102,27 @@ def test_login_logout_and_rate_limit(client, caplog):
     assert client.post("/api/login", json={"password": PASSWORD}).status_code == 429
 
 
+def test_guesses_from_elsewhere_cannot_lock_the_admin_out(tmp_path):
+    # Security review (2026-11-18): the overall limit stopped every address, so
+    # anyone on the network could keep the admin out by failing 20 times.
+    db = sqlite3.connect(tmp_path / "a.db")
+    now = [1_000_000.0]
+    auth = Auth(db, Settings(db, load_key(tmp_path / "k")), lambda: now[0])
+    auth.setup(auth.setup_code(), PASSWORD, "10.0.0.2")
+    for i in range(20):  # 4 per address keeps each under its own limit
+        with pytest.raises(Exception, match="wrong password"):
+            auth.login("nope nope nope", f"10.0.9.{i // 4}")
+    with pytest.raises(Exception, match="too many failed attempts"):
+        auth.login(PASSWORD, "10.0.0.99")  # a new address still waits
+    assert auth.login(PASSWORD, "10.0.0.2")  # the admin's own does not
+    now[0] += 31 * 86400  # long unused: an address like any other
+    for i in range(20):
+        with pytest.raises(Exception, match="wrong password"):
+            auth.login("nope nope nope", f"10.0.8.{i // 4}")
+    with pytest.raises(Exception, match="too many failed attempts"):
+        auth.login(PASSWORD, "10.0.0.2")
+
+
 def test_password_change_signs_out_other_sessions(rt, client, caplog):
     csrf = sign_up(client, caplog)["csrf"]
     other = client.cookies.get(COOKIE)

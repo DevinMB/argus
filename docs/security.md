@@ -12,9 +12,15 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 
 - HTTPS from the first start. A fresh install can only be claimed with the setup code from its log.
 - Viewing needs the password by default, because the pages list each host's address and unpatched CVEs. One switch on the Settings, Account page opens viewing to your network (for a wall display, say); installs set up before 1.3 keep the choice they had, which was open. `/metrics` and the timers' reports are always open. Changing anything always needs the password.
-- Every change needs the session's CSRF token; the session cookie is HttpOnly and SameSite=Strict. Failed sign-ins are limited per address and overall.
+- Every change needs the session's CSRF token; the session cookie is HttpOnly and SameSite=Strict. Failed sign-ins are limited per address and overall; an address that signed in within the last 14 days is spared the overall limit, so guesses from elsewhere cannot lock you out.
 - A Content-Security-Policy allows only Argus's own scripts and styles, and no framing.
 - Exporting every secret (Back up Argus) asks for the password again.
+
+## Argus's own code
+
+- Every pull request and every push to `main` runs pip-audit and `npm audit` on what ships, govulncheck on the companion and the Go release it is built with, and CodeQL on the Python, JavaScript and Go. The checks run weekly too, since new advisories arrive without any change.
+- Images are pushed by a job of their own. The jobs that build and test the code, a Dependabot update's included, cannot push.
+- Dependabot waits 14 days before offering a new release, and GitHub Actions are pinned to commits.
 
 ## Companions
 

@@ -138,8 +138,13 @@ class AppCredentials:
             r = await self.client.get(f"{API}/app/installations",
                                       headers={**HEADERS, "Authorization": f"Bearer {self.jwt()}"})
             r.raise_for_status()
+            # What the owner granted, so the GitHub page can say when the app may
+            # write: only Add or Update the pipeline needs that.
             self.installations = [{"id": i["id"], "account": i["account"]["login"],
-                                   "url": i["html_url"], "selection": i["repository_selection"]}
+                                   "url": i["html_url"], "selection": i["repository_selection"],
+                                   "writes": sorted(
+                                       k for k, v in (i.get("permissions") or {}).items()
+                                       if v in ("write", "admin") and k in PIPELINE_WRITE)}
                                   for i in r.json()]
             self._listed = self.clock()
         return self.installations

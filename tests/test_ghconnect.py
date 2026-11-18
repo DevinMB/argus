@@ -59,7 +59,10 @@ class FakeGitHub:
         if path == "/app/installations" and self.jwt_ok(request):
             return httpx.Response(200, json=[{"id": 5, "account": {"login": "ann"},
                                               "html_url": "https://github.com/settings/i/5",
-                                              "repository_selection": "selected"}])
+                                              "repository_selection": "selected",
+                                              "permissions": {"contents": "write",
+                                                              "workflows": "write",
+                                                              "metadata": "read"}}])
         if path == "/app/installations/5/access_tokens" and self.jwt_ok(request):
             return httpx.Response(201, json={"token": "ghs_install"})
         if path == "/installation/repositories":
@@ -206,6 +209,7 @@ async def test_connect_github_makes_an_app_and_uses_installation_tokens(client, 
     await client.app.state.gh.discover(force=True)
     view = client.get("/api/github").json()
     assert view["source"] == "app" and view["installations"][0]["account"] == "ann"
+    assert view["installations"][0]["writes"] == ["contents", "workflows"]
     assert view["settings_url"] == "https://github.com/settings/apps/argus-ann"
     assert "BEGIN" not in json.dumps(view)  # the key is never shown
     await poll_once(client)
