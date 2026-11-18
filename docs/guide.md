@@ -75,7 +75,7 @@ In the window, one host at a time, Argus installs what you chose (all updates, o
 
 On **Updates**, press **Connect GitHub**. Argus makes its own read-only GitHub App on your account, and you choose the repos it may see. (Cannot make apps? Paste a read-only token instead.) Updates then shows each repo's path from a Dependabot pull request to running on its host.
 
-- **No CI yet?** Open a repo and press **Add the pipeline**. Argus opens a pull request with a workflow that builds each image, tests it, scans it with Trivy, pushes it to GHCR, and merges Dependabot's patch and minor updates once they pass. You review and merge it. The first time, Argus links you to the app's permissions to allow it.
+- **No CI yet?** Open a repo and press **Add the pipeline**. Argus opens a pull request with a workflow that builds each image, tests it, scans it with Trivy, pushes it to GHCR, and merges Dependabot's patch and minor updates once they pass. You review and merge it. The first time, Argus links you to the app's permissions to allow it. When Argus has a newer version of the pipeline, Updates says so and each repo gets **Update the pipeline**: the same kind of pull request, keeping its image names and test commands.
 - **Majors wait for you.** If a critical security fix is a major update, or fails its checks, Argus alerts you with the app, the package and the pull request.
 
 ## Deploys

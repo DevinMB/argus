@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import Pipeline from "./Pipeline.jsx";
+import Pipeline, { pipelineBehind } from "./Pipeline.jsx";
 import Track from "./Track.jsx";
 import {
   STAGES, isAuto, agoText, lifecycle, lifecycleHeadline, recentMerges, safeHref, tidyTitle,
@@ -51,6 +51,26 @@ function Board({ rows }) {
         );
       })}
     </ol>
+  );
+}
+
+// Repos on an older version of Argus's pipeline: one line, with a link to each,
+// where Update the pipeline opens the pull request.
+function PipelineBehind({ repos }) {
+  const behind = repos.filter((r) => pipelineBehind(r.pipeline));
+  if (!behind.length) return null;
+  const latest = behind[0].pipeline.latest;
+  return (
+    <div className="banner banner-warn pipe-behind" role="status">
+      <p>
+        <strong>{behind.length === 1 ? "1 repo runs" : `${behind.length} repos run`} an older version of Argus&apos;s pipeline.</strong>{" "}
+        Version {latest} keeps tokens away from the code each build runs, and waits a week before taking a new release.
+        Open each one and press <strong>Update the pipeline</strong>:{" "}
+        {behind.map((r, i) => (
+          <span key={r.name}>{i ? ", " : ""}<a href={`#/updates/${encodeURIComponent(r.name)}`}>{r.name}</a></span>
+        ))}.
+      </p>
+    </div>
   );
 }
 
@@ -204,6 +224,8 @@ export default function Updates({ updates, now, focus, csrf }) {
           The last GitHub poll failed ({updates.last_error}); showing the one from {agoText(now - updates.last_success)}.
         </p>
       )}
+
+      <PipelineBehind repos={updates.repos} />
 
       <Board rows={rows} />
 

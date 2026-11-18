@@ -926,7 +926,8 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         except pipeline.GitHubError as e:
             raise HTTPException(502, str(e)) from None
         return pipeline.plan(r["owner"], r["name"], r["default_branch"], got["paths"],
-                             got["texts"], got["ci"], got["has_dependabot"], edits)
+                             got["texts"], got["ci"], got["has_dependabot"], edits,
+                             got.get("dependabot"))
 
     @app.get("/api/github/pipeline/{owner}/{repo}")
     async def pipeline_preview(owner: str, repo: str, request: Request, _: Admin) -> dict:
@@ -961,7 +962,7 @@ def create_app(runtime: Runtime | None = None, start_scheduler: bool = True,
         try:
             url = await pipeline.open_pr(request.app.state.gh_client, token, r["owner"],
                                          r["name"], r["default_branch"], p.files,
-                                         pipeline.pr_body(p))
+                                         pipeline.pr_body(p), pipeline.pr_title(p))
         except pipeline.GitHubError as e:
             why = str(e)
             if "HTTP 403" in why or "HTTP 404" in why:

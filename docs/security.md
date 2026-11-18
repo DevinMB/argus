@@ -37,6 +37,7 @@ Argus can change your hosts: it patches them and deploys to them. This page says
 - Stack secrets reach only the host whose list names the stack, inside the signed reply, and are written to a `.env` readable by root only.
 - A registry credential comes with a deploy only when one is due, is used for that pull, and is deleted with the temporary Docker config.
 - Adopting a running stack: Argus names the project only. The companion finds its folder and compose files from Docker's labels and reads only plain files inside that folder (no symlinks, 512 KB at most). It later deploys in place only into folders it collected itself and its policy allows. `.env` values never reach git; a compose file with a secret written into it is refused until the secret moves to `.env`.
+- **The app pipeline holds as little as it can.** In the `ci.yml` Argus writes, the jobs that build a pull request's code may push images and nothing else; only the Dependabot gate, which runs none of that code, may merge. Checkout leaves no token in `.git` for a build to find, and the `dependabot.yml` Argus writes waits 7 days before offering a new release (security updates do not wait), the time a hijacked package usually takes to be found and pulled.
 
 ## GitHub
 

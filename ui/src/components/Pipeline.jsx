@@ -31,9 +31,16 @@ function Permission({ need }) {
   );
 }
 
+// Argus wrote this repo's pipeline, and a newer version exists.
+export function pipelineBehind(pipe) {
+  return pipe?.kind === "argus" && !!pipe.latest && (pipe.version ?? 1) < pipe.latest;
+}
+
 export default function Pipeline({ repo, csrf }) {
   const pipe = repo.pipeline ?? { kind: "none" };
-  const [title, what, action] = SAYS[pipe.kind] ?? SAYS.own;
+  const [title, what, action] = pipelineBehind(pipe)
+    ? [SAYS.argus[0], `Version ${pipe.latest} keeps tokens away from the code each build runs, and waits a week before taking a new release. Updating keeps its image names and test commands.`, "Update the pipeline"]
+    : SAYS[pipe.kind] ?? SAYS.own;
   const [plan, setPlan] = useState(null);
   const [edits, setEdits] = useState({});
   const [busy, setBusy] = useState(false);
