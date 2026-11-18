@@ -191,6 +191,8 @@ class Adoption:
                 fixes.append('"allow_docker_socket": true')
             elif what.endswith(" of the host"):
                 fixes.append('"allow_host_namespaces": true')
+            elif m := re.match(r"`([a-z_]+)`, which this host's policy does not know", what):
+                fixes.append(f'"{m.group(1)}" to allowed_keys')
         fixes = list(dict.fromkeys(fixes))
         how = (f" On {host}, add {', '.join(fixes)} in /etc/argus-companion/policy.json, "
                "then read the files again." if fixes else

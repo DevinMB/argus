@@ -117,11 +117,11 @@ func (d *Deployer) precheck(got Collected) []string {
 	if err := writeFiles(stage, files, got.Env); err != nil {
 		return nil
 	}
-	out, err := d.compose(stage, nil, "-p", got.Project, "config", "--format", "json")
-	if err != nil {
+	bad, failed := d.judge(p, stage, got.Project, got.Dir)
+	if failed != "" {
 		return nil
 	}
-	return p.Check([]byte(out), stage, got.Dir)
+	return bad
 }
 
 // readPlain opens a regular file without following a symlink at its last step.

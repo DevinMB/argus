@@ -175,6 +175,15 @@ def test_what_the_hosts_policy_would_refuse_blocks_it_before_any_commit(env):
     assert fake.commits == []
 
 
+def test_a_compose_key_the_host_does_not_know_says_how_to_allow_it():
+    from argus.adopt import Adoption
+    text, _ = Adoption._refused("nas", [
+        "web: `runtime`, which this host's policy does not know: if it is safe, add "
+        '"runtime" to allowed_keys in /etc/argus-companion/policy.json'])
+    assert text.endswith('On nas, add "runtime" to allowed_keys in '
+                         "/etc/argus-companion/policy.json, then read the files again.")
+
+
 def test_monitoring_only_hosts_and_strangers_get_nothing(env):
     c, csrf, tok, fake = env
     assert c.post("/api/adopt/nas/nothere/read", headers=csrf).status_code == 404

@@ -91,7 +91,7 @@ From then on, each host deploys its stacks when they change in git: pull, start,
 
 - **Your own apps:** when an app's main build passes, Argus updates its image tag in the deploy repo, and the host deploys it.
 - **Secrets** are set on the Hosts page and written only to the `.env` on the host that runs the stack.
-- **The host decides what it runs.** Each host's `/etc/argus-companion/policy.json` refuses privileged containers, the Docker socket, the host's network and folders outside a short list. A stack that breaks it is refused and alerts you. See [security.md](security.md).
+- **The host decides what it runs.** Each host's `/etc/argus-companion/policy.json` refuses privileged containers, the Docker socket, the host's network, host files outside a short list of folders, and any Compose key it does not know. A stack that breaks it is refused and alerts you. See [security.md](security.md).
 - **Adopting one stack** from a host's **Deploys** tab works the same as Move in, with a preview first.
 - Without GitHub, `ARGUS_DEPLOY_DIR` points Argus at a folder with the same layout.
 
