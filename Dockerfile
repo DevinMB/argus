@@ -1,7 +1,7 @@
 # The read-only UI: built and unit-tested here, shipped as static files only.
 # The UI and the companion build on the build machine's own architecture (their
 # output is the same for every image); only the last stage is per platform.
-FROM --platform=$BUILDPLATFORM node:26.12.1-alpine AS ui
+FROM --platform=$BUILDPLATFORM node:26.13.0-alpine AS ui
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ui/.npmrc ./
 RUN npm ci --no-audit --no-fund
@@ -21,7 +21,7 @@ RUN test -z "$(gofmt -l .)" && go vet ./... && CGO_ENABLED=0 go test ./... \
         -ldflags "-s -w -X main.version=$VERSION+$(echo $COMMIT | cut -c1-12)" -o /out/argus-companion-linux-$arch . ; \
     done
 
-FROM python:3.15.0-slim-trixie
+FROM python:3.15.2-slim-trixie
 
 # iputils-ping for ping checks. The container needs CAP_NET_RAW for it (compose adds it).
 # upgrade: Debian security fixes land between base image rebuilds, and Trivy gates on them.
